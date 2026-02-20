@@ -1,1 +1,38 @@
-node_modules
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment variables (SECRET!)
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Uploads (user uploaded files)
+public/uploads/
+
+# SSL certificates (private keys)
+ssl/
+
+# Database dumps
+*.sql
+!docs/dbSchema.sql
+
+# Model files
+*.pkl
