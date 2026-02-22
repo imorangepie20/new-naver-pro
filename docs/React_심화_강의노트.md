@@ -1103,4 +1103,4 @@ export const counterSlice = createSlice({
 > **기초편** → 컴포넌트, JSX, Props, State, Router
 > **심화편** → 사이드 이펙트, 전역 상태, 로직 재사용, 서버 상태, 외부 라이브러리
 
-> 🚀 **다음 단계**: [`state-management/state-management-guide.md`](state-management/state-management-guide.md)에서 상태 관리 라이브러리를 더 깊이 학습하세요!
+> 🚀 **다음 단계**: [`state-management/state-management-guide.md`](state-management/state-management-guide.md)에서 상태 관리 라이브러리를 더 깊이 학습하세요! 그 다음 [`ssr-nextjs-guide.md`](ssr-nextjs-guide.md)로 SSR & Next.js를 마스터하세요!

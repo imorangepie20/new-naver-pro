@@ -112,6 +112,24 @@ imapplepie20 Admin Template 프로젝트를 통해 React와 TypeScript를 마스
 
 ---
 
+### ssr-nextjs-guide.md
+**대상**: React SPA 경험 있으며, SSR/Next.js를 배우고 싶은 개발자
+
+**선수 지식**: `React_강의노트.md`, `React_심화_강의노트.md` 학습 완료
+
+**학습 내용**:
+- CSR vs SSR: 무엇이 다른가?
+- Next.js 기본
+- App Router (Next.js 13+)
+- Data Fetching
+- Server Components
+- 성능 최적화
+- 배포 (Vercel, Docker)
+
+**예상 소요 시간**: 6~8시간
+
+---
+
 ### React_실전_전문가코스_Complete.md
 **목표**: 빈 프로젝트에서 시작하여 **완성된 Admin Dashboard Template**을 직접 코딩합니다.
 

@@ -2744,18 +2744,60 @@ lucide-react ──── 300+ 아이콘
 Vite ──────────── 빌드 도구, 경로 별칭
 ```
 
-### 다음 단계 제안
+### 다음 단계 (심화 학습)
 
-- [ ] API 연동 + **React Query**로 실제 데이터 표시
-- [ ] **useContext**로 테마 토글 구현
-- [ ] **useReducer + Context**로 전역 상태 관리 추가
-- [ ] **Chart.js**로 실제 차트 구현
-- [ ] 나머지 POS 페이지 직접 완성
-- [ ] UI Kits, Forms, Tables, Charts 페이지 콘텐츠 추가
+이 코스를 완료했다면 다음 주제들을 학습하여 더 깊이 있는 React 개발자가 되어보세요:
 
-> 🎓 **축하합니다!** 이제 빈 프로젝트에서 시작하여 **완전한 Admin Template**을 직접 만들 수 있습니다. 이 문서의 모든 코드는 복사-붙여넣기로 바로 작동합니다!
+#### 🔥 추천 학습 경로
+
+**1. 서버 사이드 렌더링 (SSR) & Next.js**
+```
+CSR (Client-Side Rendering)  →  SSR (Server-Side Rendering)
+         ↓
+    React SPA        →  Next.js / Remix
+```
+
+> **왜 SSR인가?**
+> - **SEO**: 검색 엔진 최적화 (서버에서 HTML 렌더링)
+> - **성능**: 초기 로딩 속도 향상
+> - **사용자 경험**: 콘텐트가 빨리 표시됨
+
+**학습 리소스:**
+- 📘 [Next.js 공식 문서](https://nextjs.org/docs)
+- 📘 [Next.js Learn](https://nextjs.org/learn)
+- 📗 **`docs/ssr-nextjs-guide.md`** (추가 예정)
+
+**핵심 개념:**
+- `getStaticProps` vs `getServerSideProps`
+- `app/router` (Next.js 13+ App Router)
+- Server Components vs Client Components
+- Streaming & Suspense
+- ISR (Incremental Static Regeneration)
+
+**2. 테스팅**
+- **단위 테스트**: Vitest + React Testing Library
+- **E2E 테스트**: Playwright, Cypress
+- **테스트 커버리지**: 컴포넌트, 훅, 페이지
+
+**3. 성능 최적화 심화**
+- **Code Splitting**: React.lazy, Suspense
+- **Virtualization**: react-window, react-virtual
+- **메모이제이션**: useMemo, useCallback, React.memo
+- **번들 최적화**: Tree Shaking, Analyzer
+
+**4. 백엔드 통합**
+- REST API (Express, NestJS)
+- GraphQL (Apollo, Relay)
+- WebSocket (실시간 통신)
+- WebRTC (화상 통화)
+
+**5. 데스크톱 앱**
+- **Electron**: React로 데스크톱 앱 만들기
+- **Tauri**: Rust 기반 가볍고 가벼운 대안
 
 ---
+
+## 부록: 빠른 참조
 
 ## 부록: 빠른 참조
 

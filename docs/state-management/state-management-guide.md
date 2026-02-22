@@ -1026,9 +1026,6 @@ export const useAppSelector = useSelector.withTypes<RootState>();
 
 ---
 
-**다음 학습 순서:**
-1. ✅ `React_강의노트.md` - React 기초
-2. ✅ `React_심화_강의노트.md` - Hooks, 상태 관리 기초
-3. ✅ `TypeScript_강의노트.md` - TypeScript 마스터
-4. ✅ **이 문서** - 상태 관리 라이브러리
-5. ⏭️ `React_실전_전문가코스_Complete.md` - 실전 프로젝트
+**다음 학습 자료:**
+- **[`ssr-nextjs-guide.md`](../ssr-nextjs-guide.md)** — SSR & Next.js 완전 정복
+- **[`React_실전_전문가코스_Complete.md`](../React_실전_전문가코스_Complete.md)** — 실전 프로젝트
