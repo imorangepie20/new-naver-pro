@@ -109,9 +109,9 @@ export interface Article {
   priceChangeState: string;           // SAME, UP, DOWN
   isPriceModification: boolean;
 
-  // 가격 (만원 단위, 문자열)
-  dealOrWarrantPrc: string;           // 매매가/보증금 "7,500"
-  rentPrc?: string;                   // 월세 "43"
+  // 가격 (만원 단위, 문자열 또는 숫자)
+  dealOrWarrantPrc: string | number;   // 매매가/보증금 "7,500" 또는 750000000
+  rentPrc?: string | number;         // 월세 "43" 또는 43
 
   // 면적 (㎡)
   area1: number;                      // 공급면적
@@ -126,8 +126,8 @@ export interface Article {
 
   // 위치
   cortarNo?: string;                  // 지역 코드
-  latitude: string;
-  longitude: string;
+  latitude: string | number;
+  longitude: string | number;
   isLocationShow: boolean;
   detailAddress: string;
   detailAddressYn: string;            // Y, N

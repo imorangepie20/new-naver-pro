@@ -41,7 +41,7 @@
   --hud-border-primary: rgba(var(--hud-accent-primary-rgb, 0, 255, 204), 0.35);
   --hud-border-secondary: #cbd5e1;
   /* Visible border on light bg */
-  --hud-border-table: #94a3b8;
+  --hud-border-table: rgb(242 232 232 / 0.4);
   --hud-shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 
@@ -65,7 +65,7 @@
   /* Border colors */
   --hud-border-primary: rgba(0, 255, 204, 0.3);
   --hud-border-secondary: rgba(255, 255, 255, 0.15);
-  --hud-border-table: rgba(255, 255, 255, 0.25);
+  --hud-border-table: rgba(255, 255, 255, 0.5);
 
   /* Font size */
   --hud-base-font-size: 16px;
@@ -241,4 +241,166 @@ body {
   100% {
     background-position: 0% 50%;
   }
+}
+
+/* Fade In Animation */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out;
+}
+
+/* Stagger Animation for Lists */
+@keyframes slideInLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-slide-in {
+  animation: slideInLeft 0.4s ease-out;
+}
+
+/* Pulse Animation for Loading */
+@keyframes pulse-subtle {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+.animate-pulse-subtle {
+  animation: pulse-subtle 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Shimmer Loading Effect */
+@keyframes shimmer {
+  0% {
+    background-position: -1000px 0;
+  }
+  100% {
+    background-position: 1000px 0;
+  }
+}
+
+.shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--hud-bg-primary) 0%,
+    var(--hud-bg-hover) 50%,
+    var(--hud-bg-primary) 100%
+  );
+  background-size: 1000px 100%;
+  animation: shimmer 2s infinite;
+}
+
+/* Card Hover Effects */
+.card-hover {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.card-hover:hover {
+  transform: translateY(-2px);
+}
+
+/* Button Press Effect */
+.button-press:active {
+  transform: scale(0.97);
+}
+
+/* Smooth Transitions */
+.smooth-transition {
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Focus Ring */
+.focus-ring:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(var(--hud-accent-primary-rgb, 0, 255, 204), 0.3);
+}
+
+/* Table Row Hover */
+.table-row-hover {
+  transition: background-color 0.15s ease-in-out;
+}
+
+/* Badge Glow */
+.badge-glow {
+  box-shadow: 0 0 10px rgba(var(--hud-accent-primary-rgb, 0, 255, 204), 0.2);
+}
+
+/* Spinner Animation */
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+/* Bounce Animation */
+@keyframes bounce {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-25%);
+  }
+}
+
+.animate-bounce {
+  animation: bounce 1s infinite;
+}
+
+/* Scale In Animation */
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-scale-in {
+  animation: scaleIn 0.2s ease-out;
+}
+
+/* Slide Up Animation */
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-slide-up {
+  animation: slideUp 0.3s ease-out;
 }

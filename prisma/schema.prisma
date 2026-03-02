@@ -311,6 +311,9 @@ model Property {
   // 단지 정보 (아파트/오피스텔만 해당)
   complexNo             String?  // 단지 번호
 
+  // 데이터 소스 구분
+  dataSource            String   @default("NAVER") // NAVER: 네이버 API, UPLOAD: 파일 업로드
+
   // 캐시 관리
   lastCrawledAt          DateTime?
   cacheExpiresAt         DateTime?

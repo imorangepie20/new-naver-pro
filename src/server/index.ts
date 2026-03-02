@@ -13,17 +13,28 @@ const app = new Hono();
 // CORS 설정
 app.use('/*', cors({
   origin: (origin) => {
+    // origin이 없는 요청(동일 출처, 직접 IP 접속 등)은 허용
+    if (!origin) return true;
+
     const allowedOrigins = [
       'http://localhost:5173',
       'http://localhost:5174',
       'http://192.168.219.57:5173',
       'http://175.195.36.16:5173',
       'http://imapplepie20.tplinkdns.com:5173',
+      'https://imapplepie20.tplinkdns.com',
     ];
-    // 정규식으로 tplinkdns.com 서브도메인 허용
-    if (origin && /\.tplinkdns\.com:5173$/.test(origin)) {
+
+    // tplinkdns.com 서브도메인 모두 허용
+    if (/\.tplinkdns\.com(:5173)?$/.test(origin)) {
       return origin;
     }
+
+    // 로컬 네트워크 IP 허용 (192.168.*)
+    if (/^http:\/\/192\.168\.\d+\.\d+:5173$/.test(origin)) {
+      return origin;
+    }
+
     return allowedOrigins.includes(origin) ? origin : allowedOrigins[0];
   },
   credentials: true,
@@ -235,6 +246,363 @@ app.get('/api/regions/tree', async (c) => {
 // ============================================
 // 3. 매물 API
 // ============================================
+
+/**
+ * POST /api/properties/bulk
+ * 매물 일괄 등록 (파일 파싱 데이터를 중앙 DB에 저장)
+ * Body: { articles: Article[] }
+ * NOTE: /bulk 경로가 단건 POST보다 먼저 정의되어야 함
+ */
+app.post('/api/properties/bulk', async (c) => {
+  try {
+    const body = await c.req.json();
+    const { articles, dataSource } = body;
+
+    if (!articles || !Array.isArray(articles) || articles.length === 0) {
+      return c.json({ error: 'articles array is required' }, 400);
+    }
+
+    // dataSource가 없으면 NAVER로 기본값 (네이버 검색에서 온 데이터)
+    const finalDataSource = dataSource || 'NAVER';
+
+    let savedCount = 0;
+    let skippedCount = 0;
+    const errors: Array<{ articleNo: string; error: string }> = [];
+
+    for (const article of articles) {
+      try {
+        // 필수 필드 검증
+        if (!article.articleName) {
+          errors.push({ articleNo: article.articleNo || 'unknown', error: 'articleName is required' });
+          skippedCount++;
+          continue;
+        }
+
+        // articleNo 자동 생성 (없으면)
+        let articleNo = article.articleNo;
+        if (!articleNo) {
+          const timestamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+          const randomSuffix = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+          articleNo = `PROP_${timestamp}_${randomSuffix}`;
+        }
+
+        // 가격 변환 함수 ("47억", "18억5,000" → 숫자)
+        const parsePrice = (priceStr: string | number | null | undefined): number | null => {
+          if (priceStr === null || priceStr === undefined) return null;
+          if (typeof priceStr === 'number') return priceStr;
+
+          // "47억" → 4700000000
+          // "18억5,000" → 180005000
+          // "1억2,345" → 10002345
+          // "1,234" → 1234
+          const str = String(priceStr).trim();
+          const eokMatch = str.match(/(\d+)억/);
+          const manMatch = str.match(/(\d+),?(\d+)/);
+          const onlyMan = str.match(/^(\d+),?(\d+)$/);
+
+          if (eokMatch && manMatch) {
+            // "18억5,000" 형식
+            const eok = parseInt(eokMatch[1]) * 10000;
+            const man = parseInt(manMatch[1] + (manMatch[2] || ''));
+            return eok + man;
+          } else if (eokMatch) {
+            // "47억" 형식
+            return parseInt(eokMatch[1]) * 10000;
+          } else if (onlyMan) {
+            // "5,000" 또는 "5000" 형식 (만원 단위)
+            return parseInt((onlyMan[1] + (onlyMan[2] || '')).replace(/,/g, ''));
+          }
+          return parseInt(str.replace(/,/g, '')) || null;
+        };
+
+        // 위도/경도 변환
+        const parseCoord = (coord: string | number | null | undefined): number | null => {
+          if (coord === null || coord === undefined) return null;
+          if (typeof coord === 'number') return coord;
+          const parsed = parseFloat(String(coord));
+          return isNaN(parsed) ? null : parsed;
+        };
+
+        // 면적 변환
+        const parseArea = (area: string | number | null | undefined): number | null => {
+          if (area === null || area === undefined) return null;
+          if (typeof area === 'number') return area;
+          const parsed = parseFloat(String(area));
+          return isNaN(parsed) ? null : parsed;
+        };
+
+        // upsert: 동일 articleNo가 있으면 업데이트, 없으면 생성
+        await prisma.property.upsert({
+          where: { articleNo },
+          update: {
+            articleName: article.articleName,
+            articleStatus: 'R0', // 정상
+            realEstateTypeCode: article.realEstateTypeCode || 'APT',
+            realEstateTypeName: article.realEstateTypeName || '아파트',
+            tradeTypeCode: article.tradeTypeCode || 'A1',
+            tradeTypeName: article.tradeTypeName || '매매',
+            dealOrWarrantPrc: parsePrice(article.dealOrWarrantPrc),
+            rentPrc: parsePrice(article.rentPrc),
+            area1: parseArea(article.area1),
+            area2: parseArea(article.area2),
+            floorInfo: article.floorInfo || null,
+            direction: article.direction || null,
+            buildingName: article.buildingName || article.articleName || null,
+            latitude: parseCoord(article.latitude),
+            longitude: parseCoord(article.longitude),
+            cortarNo: article.cortarNo || '0000000000',
+            detailAddress: article.detailAddress || null,
+            articleConfirmYmd: article.articleConfirmYmd || null,
+            articleFeatureDesc: article.articleFeatureDesc || null,
+            tagList: Array.isArray(article.tagList) ? JSON.stringify(article.tagList) : null,
+            cpName: article.cpName || null,
+            realtorName: article.realtorName || null,
+            cpPcArticleUrl: article.cpPcArticleUrl || null,
+            cpMobileArticleUrl: article.cpMobileArticleUrl || null,
+            complexNo: article.complexNo || null,
+            dataSource: finalDataSource, // NAVER(크롤링) 또는 UPLOAD(파일)
+            lastCrawledAt: new Date(),
+            cacheExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30일
+          },
+          create: {
+            articleNo,
+            articleName: article.articleName,
+            articleStatus: 'R0',
+            realEstateTypeCode: article.realEstateTypeCode || 'APT',
+            realEstateTypeName: article.realEstateTypeName || '아파트',
+            tradeTypeCode: article.tradeTypeCode || 'A1',
+            tradeTypeName: article.tradeTypeName || '매매',
+            dealOrWarrantPrc: parsePrice(article.dealOrWarrantPrc),
+            rentPrc: parsePrice(article.rentPrc),
+            area1: parseArea(article.area1),
+            area2: parseArea(article.area2),
+            floorInfo: article.floorInfo || null,
+            direction: article.direction || null,
+            buildingName: article.buildingName || article.articleName || null,
+            latitude: parseCoord(article.latitude),
+            longitude: parseCoord(article.longitude),
+            cortarNo: article.cortarNo || '0000000000',
+            detailAddress: article.detailAddress || null,
+            articleConfirmYmd: article.articleConfirmYmd || null,
+            articleFeatureDesc: article.articleFeatureDesc || null,
+            tagList: Array.isArray(article.tagList) ? JSON.stringify(article.tagList) : null,
+            cpName: article.cpName || null,
+            realtorName: article.realtorName || null,
+            cpPcArticleUrl: article.cpPcArticleUrl || null,
+            cpMobileArticleUrl: article.cpMobileArticleUrl || null,
+            complexNo: article.complexNo || null,
+            dataSource: finalDataSource, // NAVER(크롤링) 또는 UPLOAD(파일)
+            lastCrawledAt: new Date(),
+            cacheExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+          },
+        });
+        savedCount++;
+      } catch (err) {
+        console.error(`Failed to save article ${article.articleNo}:`, err);
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        // Prisma 에러에서 상세 정보 추출
+        if (err instanceof Error) {
+          const stack = err.stack || '';
+          console.error('Error stack:', stack);
+        }
+        errors.push({ articleNo: article.articleNo || 'unknown', error: errorMessage });
+        skippedCount++;
+      }
+    }
+
+    return c.json({
+      success: true,
+      savedCount,
+      skippedCount,
+      totalRequested: articles.length,
+      errors: errors.length > 0 ? errors : undefined,
+    });
+  } catch (error) {
+    console.error('Bulk save to central DB error:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Failed to bulk save properties';
+    const errorDetails = error instanceof Error ? {
+      message: error.message,
+      name: error.name,
+      stack: error.stack?.split('\n').slice(0, 3).join('\n'),
+    } : { message: String(error) };
+    return c.json(
+      {
+        error: errorMessage,
+        details: errorDetails,
+      },
+      500
+    );
+  }
+});
+
+/**
+ * GET /api/properties
+ * 중앙 DB 매물 목록 조회
+ * @query dataSource - NAVER(네이버), UPLOAD(파일업로드), ALL(전체)
+ * @query tradeTypeCode - 거래방식 필터 (A1, B1, B2, B3)
+ * @query cortarNo - 지역 코드 필터
+ * @query page - 페이지 번호 (default: 1)
+ * @query limit - 페이지 당 개수 (default: 50)
+ */
+app.get('/api/properties', async (c) => {
+  try {
+    const dataSource = c.req.query('dataSource') || 'ALL';
+    const tradeTypeCode = c.req.query('tradeTypeCode');
+    const cortarNo = c.req.query('cortarNo');
+    const page = parseInt(c.req.query('page') || '1');
+    const limit = parseInt(c.req.query('limit') || '50');
+    const skip = (page - 1) * limit;
+
+    // where 조건构建
+    const where: any = {};
+    if (dataSource !== 'ALL') {
+      where.dataSource = dataSource;
+    }
+    if (tradeTypeCode) {
+      where.tradeTypeCode = tradeTypeCode;
+    }
+    if (cortarNo) {
+      where.cortarNo = cortarNo;
+    }
+
+    const [properties, totalCount] = await Promise.all([
+      prisma.property.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+      }),
+      prisma.property.count({ where }),
+    ]);
+
+    // tagList JSON 파싱
+    const parsedProperties = properties.map(p => ({
+      ...p,
+      tagList: p.tagList ? JSON.parse(p.tagList) : [],
+    }));
+
+    return c.json({
+      success: true,
+      properties: parsedProperties,
+      pagination: {
+        page,
+        limit,
+        total: totalCount,
+        totalPages: Math.ceil(totalCount / limit),
+      },
+    });
+  } catch (error) {
+    console.error('Properties fetch error:', error);
+    return c.json(
+      {
+        error: error instanceof Error ? error.message : 'Failed to fetch properties',
+      },
+      500
+    );
+  }
+});
+
+/**
+ * DELETE /api/properties/:articleNo
+ * 중앙 DB 매물 삭제
+ */
+app.delete('/api/properties/:articleNo', async (c) => {
+  try {
+    const articleNo = c.req.param('articleNo');
+
+    await prisma.property.delete({
+      where: { articleNo },
+    });
+
+    return c.json({ success: true, message: 'Property deleted' });
+  } catch (error) {
+    console.error('Property delete error:', error);
+    return c.json(
+      {
+        error: error instanceof Error ? error.message : 'Failed to delete property',
+      },
+      500
+    );
+  }
+});
+
+/**
+ * POST /api/properties
+ * 매물 직접 등록 (문서에서 가져온 데이터)
+ */
+app.post('/api/properties', async (c) => {
+  try {
+    const body = await c.req.json();
+
+    // 필수 필드 검증
+    if (!body.articleName) {
+      return c.json({ error: 'articleName is required' }, 400);
+    }
+
+    // articleNo 자동 생성 (없으면)
+    let articleNo = body.articleNo;
+    if (!articleNo) {
+      // 타임스탬프 + 난수 랜덤 생성 (예: PROP_20260302_001)
+      const timestamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      const randomSuffix = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+      articleNo = `PROP_${timestamp}_${randomSuffix}`;
+    }
+
+    // 매물 생성
+    const property = await prisma.property.create({
+      data: {
+        articleNo,
+                        articleName: body.articleName,
+                        articleStatus: 'R0', // 정상
+                        realEstateTypeCode: body.realEstateTypeCode || 'APT',
+                        realEstateTypeName: body.realEstateTypeName || '아파트',
+                        tradeTypeCode: body.tradeTypeCode || 'A1',
+                        tradeTypeName: body.tradeTypeName || '매매',
+                        dealOrWarrantPrc: body.dealOrWarrantPrc || null,
+                        rentPrc: body.rentPrc || null,
+                        area1: body.area1 || null,
+                        area2: body.area2 || null,
+                        floorInfo: body.floorInfo || null,
+                        direction: body.direction || null,
+                        buildingName: body.buildingName || body.articleName || null,
+                        latitude: body.latitude || null,
+                        longitude: body.longitude || null,
+                        cortarNo: body.cortarNo || '0000000000',
+                        detailAddress: body.detailAddress || null,
+                        articleConfirmYmd: body.articleConfirmYmd || null,
+                        articleFeatureDesc: body.articleFeatureDesc || null,
+                        tagList: Array.isArray(body.tagList) ? JSON.stringify(body.tagList) : null,
+                        cpName: body.cpName || null,
+                        realtorName: body.realtorName || null,
+                        cpPcArticleUrl: body.cpPcArticleUrl || null,
+                        cpMobileArticleUrl: body.cpMobileArticleUrl || null,
+                        complexNo: body.complexNo || null,
+                        dataSource: body.dataSource || 'NAVER', // 데이터 소스 (기본: NAVER)
+                        lastCrawledAt: new Date(),
+                        cacheExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30일
+                      },
+                    });
+
+    // tagList JSON 파싱 후 반환
+    const tagList = property.tagList ? JSON.parse(property.tagList) : [];
+
+    return c.json({
+      success: true,
+      property: {
+        ...property,
+        tagList,
+      },
+    });
+  } catch (error) {
+    console.error('Property creation error:', error);
+    return c.json(
+      {
+        error: error instanceof Error ? error.message : 'Failed to create property',
+      },
+      500
+    );
+  }
+});
 
 /**
  * GET /api/articles/complex/:complexNo

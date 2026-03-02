@@ -267,26 +267,32 @@ const ApartmentTempPropertyList = () => {
     try {
       const selectedArticles = articles.filter((a) => selectedItems.has(a.id));
 
+      // id 필드 제외 (서버에서 필요 없는 필드)
+      const articlesToSend = selectedArticles.map(({ id, ...rest }) => rest);
+
+      console.log('저장할 매물:', articlesToSend);
+
       // 서버 API 호출 (중앙 DB 저장)
-      const response = await fetch(`${API_BASE}/api/user/saved-properties/bulk`, {
+      const response = await fetch(`${API_BASE}/api/properties/bulk`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          articles: selectedArticles,
-          complexNo,
-          complexName,
+          articles: articlesToSend,
+          dataSource: 'NAVER',  // 네이버 검색에서 온 데이터
         }),
       });
+
+      const result = await response.json();
+      console.log('저장 결과:', result);
 
       if (response.ok) {
         alert(`${selectedArticles.length}개 매물을 정규 매물로 저장했습니다.`);
         // 정규 매물 목록 페이지로 이동
         navigate('/real-estate/regular-properties');
       } else {
-        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
-        alert(`저장 실패: ${errorData.error || '서버 오류'}`);
+        alert(`저장 실패: ${result.error || '서버 오류'}`);
       }
     } catch (error) {
       console.error('저장 실패:', error);

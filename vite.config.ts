@@ -10,9 +10,9 @@ export default defineConfig({
         },
     },
     server: {
-        host: true,
+        host: true, // 0.0.0.0으로 바인딩하여 외부 접근 허용
         port: 5173,
-        allowedHosts: ['imapplepie20.tplinkdns.com', '.tplinkdns.com', 'localhost', '127.0.0.1'],
+        allowedHosts: true, // 모든 호스트 허용
         proxy: {
             '/api': {
                 target: 'http://localhost:3001',

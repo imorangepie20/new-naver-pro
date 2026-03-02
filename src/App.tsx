@@ -64,6 +64,7 @@ import TempPropertyList from './pages/real-estate/TempPropertyList'
 import ComplexListPage from './pages/real-estate/ComplexListPage'
 import ApartmentTempPropertyList from './pages/real-estate/ApartmentTempPropertyList'
 import ApartmentRegularPropertyList from './pages/real-estate/ApartmentRegularPropertyList'
+import PropertyRegister from './pages/real-estate/PropertyRegister'
 
 // Misc Pages
 import Error404 from './pages/Error404'
@@ -170,6 +171,7 @@ function App() {
                     <Route path="real-estate/officetels" element={<ComplexListPage propertyType="OPST" />} />
                     <Route path="real-estate/apartment-temp-properties" element={<ApartmentTempPropertyList />} />
                     <Route path="real-estate/regular-properties" element={<ApartmentRegularPropertyList />} />
+                    <Route path="real-estate/register" element={<PropertyRegister />} />
                 </Route>
 
                 {/* 404 Fallback */}

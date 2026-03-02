@@ -23,6 +23,7 @@ import {
     Image,
     Building2,
     LogOut,
+    Building2Icon,
 } from 'lucide-react'
 import { useAuthStore } from '../../stores/authStore'
 
@@ -41,6 +42,13 @@ interface MenuItem {
 const menuItems: MenuItem[] = [
     { title: 'Dashboard', icon: <LayoutDashboard size={20} />, path: '/' },
     { title: 'Analytics', icon: <BarChart3 size={20} />, path: '/analytics' },
+    {
+        title: '매물 관리',
+        icon: <FileText size={20} />,
+        children: [
+            { title: '매물 등록', path: '/real-estate/register' },
+        ],
+    },
     // {
     //     title: 'Email',
     //     icon: <Mail size={20} />,
