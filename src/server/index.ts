@@ -527,6 +527,54 @@ app.delete('/api/properties/:articleNo', async (c) => {
 });
 
 /**
+ * PUT /api/properties/:articleNo
+ * 중앙 DB 매물 수정
+ */
+app.put('/api/properties/:articleNo', async (c) => {
+  try {
+    const articleNo = c.req.param('articleNo');
+    const body = await c.req.json();
+
+    // 업데이트 가능한 필드만 추출
+    const updateData: any = {};
+
+    // 기본 정보
+    const allowedFields = [
+      'articleName', 'buildingName', 'detailAddress',
+      'realEstateTypeCode', 'realEstateTypeName',
+      'tradeTypeCode', 'tradeTypeName',
+      'dealOrWarrantPrc', 'rentPrc',
+      'area1', 'area2', 'floorInfo',
+      'managerName', 'managerPhone',
+      'articleFeatureDesc', 'articleConfirmYmd',
+      'direction', 'latitude', 'longitude',
+    ];
+
+    for (const field of allowedFields) {
+      if (body[field] !== undefined) {
+        updateData[field] = body[field];
+      }
+    }
+
+    // 매물 수정
+    const property = await prisma.property.update({
+      where: { articleNo },
+      data: updateData,
+    });
+
+    return c.json({ success: true, property });
+  } catch (error) {
+    console.error('Property update error:', error);
+    return c.json(
+      {
+        error: error instanceof Error ? error.message : 'Failed to update property',
+      },
+      500
+    );
+  }
+});
+
+/**
  * POST /api/properties
  * 매물 직접 등록 (문서에서 가져온 데이터)
  */
@@ -552,36 +600,36 @@ app.post('/api/properties', async (c) => {
     const property = await prisma.property.create({
       data: {
         articleNo,
-                        articleName: body.articleName,
-                        articleStatus: 'R0', // 정상
-                        realEstateTypeCode: body.realEstateTypeCode || 'APT',
-                        realEstateTypeName: body.realEstateTypeName || '아파트',
-                        tradeTypeCode: body.tradeTypeCode || 'A1',
-                        tradeTypeName: body.tradeTypeName || '매매',
-                        dealOrWarrantPrc: body.dealOrWarrantPrc || null,
-                        rentPrc: body.rentPrc || null,
-                        area1: body.area1 || null,
-                        area2: body.area2 || null,
-                        floorInfo: body.floorInfo || null,
-                        direction: body.direction || null,
-                        buildingName: body.buildingName || body.articleName || null,
-                        latitude: body.latitude || null,
-                        longitude: body.longitude || null,
-                        cortarNo: body.cortarNo || '0000000000',
-                        detailAddress: body.detailAddress || null,
-                        articleConfirmYmd: body.articleConfirmYmd || null,
-                        articleFeatureDesc: body.articleFeatureDesc || null,
-                        tagList: Array.isArray(body.tagList) ? JSON.stringify(body.tagList) : null,
-                        cpName: body.cpName || null,
-                        realtorName: body.realtorName || null,
-                        cpPcArticleUrl: body.cpPcArticleUrl || null,
-                        cpMobileArticleUrl: body.cpMobileArticleUrl || null,
-                        complexNo: body.complexNo || null,
-                        dataSource: body.dataSource || 'NAVER', // 데이터 소스 (기본: NAVER)
-                        lastCrawledAt: new Date(),
-                        cacheExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30일
-                      },
-                    });
+        articleName: body.articleName,
+        articleStatus: 'R0', // 정상
+        realEstateTypeCode: body.realEstateTypeCode || 'APT',
+        realEstateTypeName: body.realEstateTypeName || '아파트',
+        tradeTypeCode: body.tradeTypeCode || 'A1',
+        tradeTypeName: body.tradeTypeName || '매매',
+        dealOrWarrantPrc: body.dealOrWarrantPrc || null,
+        rentPrc: body.rentPrc || null,
+        area1: body.area1 || null,
+        area2: body.area2 || null,
+        floorInfo: body.floorInfo || null,
+        direction: body.direction || null,
+        buildingName: body.buildingName || body.articleName || null,
+        latitude: body.latitude || null,
+        longitude: body.longitude || null,
+        cortarNo: body.cortarNo || '0000000000',
+        detailAddress: body.detailAddress || null,
+        articleConfirmYmd: body.articleConfirmYmd || null,
+        articleFeatureDesc: body.articleFeatureDesc || null,
+        tagList: Array.isArray(body.tagList) ? JSON.stringify(body.tagList) : null,
+        cpName: body.cpName || null,
+        realtorName: body.realtorName || null,
+        cpPcArticleUrl: body.cpPcArticleUrl || null,
+        cpMobileArticleUrl: body.cpMobileArticleUrl || null,
+        complexNo: body.complexNo || null,
+        dataSource: body.dataSource || 'NAVER', // 데이터 소스 (기본: NAVER)
+        lastCrawledAt: new Date(),
+        cacheExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30일
+      },
+    });
 
     // tagList JSON 파싱 후 반환
     const tagList = property.tagList ? JSON.parse(property.tagList) : [];
@@ -2133,6 +2181,282 @@ app.put('/api/global-theme', async (c) => {
   } catch (error) {
     console.error('Global theme save error:', error);
     return c.json({ error: '테마 저장 실패' }, 500);
+  }
+});
+
+// ============================================
+// 관심 매물 API (독립 - 네이버 데이터 무관)
+// ============================================
+
+app.get('/api/favorite-properties', async (c) => {
+  try {
+    // 기본 사용자의 ID 찾기
+    const defaultUser = await prisma.user.findFirst({
+      where: { email: 'default@example.com' }
+    });
+
+    if (!defaultUser) {
+      return c.json({ success: true, properties: [] });
+    }
+
+    const properties = await prisma.favoriteProperty.findMany({
+      where: { userId: defaultUser.id },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return c.json({ success: true, properties });
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : 'Failed to fetch' }, 500);
+  }
+});
+
+app.post('/api/favorite-properties', async (c) => {
+  try {
+    const body = await c.req.json();
+    if (!body.articleName) return c.json({ error: '매물명은 필수입니다' }, 400);
+
+    // 기본 사용자 생성 또는 조회
+    let userId = body.userId;
+    if (!userId) {
+      let defaultUser = await prisma.user.findFirst({
+        where: { email: 'default@example.com' }
+      });
+      if (!defaultUser) {
+        defaultUser = await prisma.user.create({
+          data: {
+            email: 'default@example.com',
+            name: '기본 사용자',
+            provider: 'local',
+          }
+        });
+      }
+      userId = defaultUser.id;
+    }
+
+    const property = await prisma.favoriteProperty.create({
+      data: {
+        userId,
+        articleName: body.articleName,
+        buildingName: body.buildingName || null,
+        address: body.address || null,
+        propertyType: body.propertyType || null,
+        tradeType: body.tradeType || null,
+        price: body.price || null,
+        area: body.area || null,
+        notes: body.notes || null,
+      },
+    });
+    return c.json({ success: true, property });
+  } catch (error) {
+    console.error('Favorite property create error:', error);
+    return c.json({ error: error instanceof Error ? error.message : 'Failed to create' }, 500);
+  }
+});
+
+app.put('/api/favorite-properties/:id', async (c) => {
+  try {
+    const id = c.req.param('id');
+    const body = await c.req.json();
+    const updateData: any = {};
+    for (const field of ['articleName', 'buildingName', 'address', 'propertyType', 'tradeType', 'price', 'area', 'notes']) {
+      if (body[field] !== undefined) updateData[field] = body[field];
+    }
+    const property = await prisma.favoriteProperty.update({ where: { id }, data: updateData });
+    return c.json({ success: true, property });
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : 'Failed to update' }, 500);
+  }
+});
+
+app.delete('/api/favorite-properties/:id', async (c) => {
+  try {
+    const id = c.req.param('id');
+    await prisma.favoriteProperty.delete({ where: { id } });
+    return c.json({ success: true, message: 'Deleted' });
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : 'Failed to delete' }, 500);
+  }
+});
+
+// ============================================
+// 관리 매물 API (계약 관리)
+// ============================================
+
+/**
+ * GET /api/managed-properties
+ * 관리 매물 목록 조회
+ * @query renewalDays - 재계약 만료 N일 이내 필터 (90, 30, 15, 7, 3, 1)
+ * @query paymentType - 납부 알림 필터 (interim, final)
+ * @query paymentDays - 납부 N일 이내 필터
+ * @query status - 상태 필터 (active, expired, renewed)
+ */
+app.get('/api/managed-properties', async (c) => {
+  try {
+    const renewalDays = c.req.query('renewalDays') ? parseInt(c.req.query('renewalDays')!) : undefined;
+    const paymentType = c.req.query('paymentType');
+    const paymentDays = c.req.query('paymentDays') ? parseInt(c.req.query('paymentDays')!) : undefined;
+    const status = c.req.query('status') || 'active';
+
+    const where: any = {};
+    if (status !== 'all') {
+      where.status = status;
+    }
+
+    // 재계약 만료일 기준 필터
+    if (renewalDays !== undefined) {
+      const now = new Date();
+      const futureDate = new Date(now.getTime() + renewalDays * 24 * 60 * 60 * 1000);
+      where.contractEndDate = {
+        gte: now,
+        lte: futureDate,
+      };
+    }
+
+    // 납부일 기준 필터 (중도금/잔금)
+    if (paymentType && paymentDays !== undefined) {
+      const now = new Date();
+      const futureDate = new Date(now.getTime() + paymentDays * 24 * 60 * 60 * 1000);
+      if (paymentType === 'interim') {
+        where.interimPaymentDate = { gte: now, lte: futureDate };
+      } else if (paymentType === 'final') {
+        where.finalPaymentDate = { gte: now, lte: futureDate };
+      }
+    }
+
+    const properties = await prisma.managedProperty.findMany({
+      where,
+      orderBy: { contractEndDate: 'asc' },
+    });
+
+    return c.json({ success: true, properties });
+  } catch (error) {
+    console.error('Managed properties fetch error:', error);
+    return c.json({ error: error instanceof Error ? error.message : 'Failed to fetch' }, 500);
+  }
+});
+
+/**
+ * POST /api/managed-properties
+ * 관리 매물 등록
+ */
+app.post('/api/managed-properties', async (c) => {
+  try {
+    const body = await c.req.json();
+
+    if (!body.articleName || !body.contractType || !body.contractDate || !body.contractEndDate) {
+      return c.json({ error: '매물명, 거래유형, 계약시작일, 계약만료일은 필수입니다' }, 400);
+    }
+
+    // 기본 사용자 생성 또는 조회
+    let userId = body.userId;
+    if (!userId) {
+      let defaultUser = await prisma.user.findFirst({
+        where: { email: 'default@example.com' }
+      });
+      if (!defaultUser) {
+        defaultUser = await prisma.user.create({
+          data: {
+            email: 'default@example.com',
+            name: '기본 사용자',
+            provider: 'local',
+          }
+        });
+      }
+      userId = defaultUser.id;
+    }
+
+    const property = await prisma.managedProperty.create({
+      data: {
+        userId,
+        articleName: body.articleName,
+        buildingName: body.buildingName || null,
+        address: body.address || null,
+        propertyId: body.propertyId || null,
+        contractType: body.contractType,
+        downPayment: body.downPayment || null,
+        downPaymentDate: body.downPaymentDate ? new Date(body.downPaymentDate) : null,
+        interimPayment: body.interimPayment || null,
+        interimPaymentDate: body.interimPaymentDate ? new Date(body.interimPaymentDate) : null,
+        finalPayment: body.finalPayment || null,
+        finalPaymentDate: body.finalPaymentDate ? new Date(body.finalPaymentDate) : null,
+        contractDate: new Date(body.contractDate),
+        contractEndDate: new Date(body.contractEndDate),
+        totalPrice: body.totalPrice || null,
+        depositAmount: body.depositAmount || null,
+        monthlyRent: body.monthlyRent || null,
+        tenantName: body.tenantName || null,
+        tenantPhone: body.tenantPhone || null,
+        managerName: body.managerName || null,
+        managerPhone: body.managerPhone || null,
+        notes: body.notes || null,
+        status: body.status || 'active',
+      },
+    });
+
+    return c.json({ success: true, property });
+  } catch (error) {
+    console.error('Managed property create error:', error);
+    return c.json({ error: error instanceof Error ? error.message : 'Failed to create' }, 500);
+  }
+});
+
+/**
+ * PUT /api/managed-properties/:id
+ * 관리 매물 수정
+ */
+app.put('/api/managed-properties/:id', async (c) => {
+  try {
+    const id = c.req.param('id');
+    const body = await c.req.json();
+
+    const updateData: any = {};
+    const fields = [
+      'articleName', 'buildingName', 'address', 'contractType',
+      'downPayment', 'interimPayment', 'finalPayment',
+      'totalPrice', 'depositAmount', 'monthlyRent',
+      'tenantName', 'tenantPhone', 'managerName', 'managerPhone',
+      'notes', 'status', 'propertyId',
+    ];
+
+    for (const field of fields) {
+      if (body[field] !== undefined) updateData[field] = body[field];
+    }
+
+    // 날짜 필드는 Date 변환
+    const dateFields = [
+      'downPaymentDate', 'interimPaymentDate', 'finalPaymentDate',
+      'contractDate', 'contractEndDate',
+    ];
+    for (const field of dateFields) {
+      if (body[field] !== undefined) {
+        updateData[field] = body[field] ? new Date(body[field]) : null;
+      }
+    }
+
+    const property = await prisma.managedProperty.update({
+      where: { id },
+      data: updateData,
+    });
+
+    return c.json({ success: true, property });
+  } catch (error) {
+    console.error('Managed property update error:', error);
+    return c.json({ error: error instanceof Error ? error.message : 'Failed to update' }, 500);
+  }
+});
+
+/**
+ * DELETE /api/managed-properties/:id
+ * 관리 매물 삭제
+ */
+app.delete('/api/managed-properties/:id', async (c) => {
+  try {
+    const id = c.req.param('id');
+    await prisma.managedProperty.delete({ where: { id } });
+    return c.json({ success: true, message: 'Deleted' });
+  } catch (error) {
+    console.error('Managed property delete error:', error);
+    return c.json({ error: error instanceof Error ? error.message : 'Failed to delete' }, 500);
   }
 });
 

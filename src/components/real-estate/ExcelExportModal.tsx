@@ -25,6 +25,8 @@ export const EXPORT_FIELDS = [
   { key: 'tagList', label: '태그', default: false },
   { key: 'cpName', label: '중개업소', default: true },
   { key: 'realtorName', label: '중개사', default: true },
+  { key: 'managerName', label: '책임자명', default: true },
+  { key: 'managerPhone', label: '책임자 전화번호', default: true },
   { key: 'latitude', label: '위도', default: false },
   { key: 'longitude', label: '경도', default: false },
 ] as const;

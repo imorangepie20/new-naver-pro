@@ -17,6 +17,7 @@ import {
   Filter,
   Home,
   Loader2,
+  HelpCircle,
 } from 'lucide-react';
 import HudCard from '../../components/common/HudCard';
 import Button from '../../components/common/Button';
@@ -348,7 +349,9 @@ const ApartmentRegularPropertyList = () => {
 
           switch (fieldConfig.key) {
             case 'articleName':
-              value = article.articleName || article.buildingName || '';
+              const cName = article.complexName || '';
+              const aName = article.articleName || article.buildingName || '';
+              value = cName && aName && cName !== aName ? `${cName} ${aName}` : (cName || aName || '');
               break;
             case 'dealOrWarrantPrc':
               value = article.dealOrWarrantPrc || '';
@@ -567,7 +570,7 @@ const ApartmentRegularPropertyList = () => {
           <div className="flex gap-1.5 flex-wrap">
             <button
               onClick={() => setSelectedPropertyTypes(new Set())}
-              className={`px-3 py-2 text-sm rounded-lg transition-all duration-200 ${selectedPropertyTypes.size === 0
+              className={`px-3 py-1 text-sm rounded-lg transition-all duration-200 ${selectedPropertyTypes.size === 0
                 ? 'bg-hud-accent-primary text-hud-bg-primary font-medium shadow-md shadow-hud-accent-primary/15'
                 : 'bg-hud-bg-primary text-hud-text-secondary hover:bg-hud-bg-hover border border-[var(--hud-border-table)]'
                 }`}
@@ -589,7 +592,7 @@ const ApartmentRegularPropertyList = () => {
                     setSelectedPropertyTypes(newTypes);
                     setCurrentPage(1);
                   }}
-                  className={`px-3 py-2 text-sm rounded-lg transition-all duration-200 ${isSelected
+                  className={`px-3 py-1 text-sm rounded-lg transition-all duration-200 ${isSelected
                     ? 'bg-hud-accent-primary text-hud-bg-primary font-medium shadow-md shadow-hud-accent-primary/15'
                     : 'bg-hud-bg-primary text-hud-text-secondary hover:bg-hud-bg-hover border border-[var(--hud-border-table)]'
                     }`}
@@ -620,7 +623,7 @@ const ApartmentRegularPropertyList = () => {
                   setSelectedTradeType(type.code);
                   setCurrentPage(1);
                 }}
-                className={`px-4 py-2 text-sm rounded-lg transition-all duration-200 ${selectedTradeType === type.code
+                className={`px-3 py-1 text-sm rounded-lg transition-all duration-200 ${selectedTradeType === type.code
                   ? 'bg-hud-accent-primary text-hud-bg-primary font-medium shadow-md shadow-hud-accent-primary/15'
                   : 'bg-hud-bg-primary text-hud-text-secondary hover:bg-hud-bg-hover border border-[var(--hud-border-table)]'
                   }`}
@@ -676,7 +679,7 @@ const ApartmentRegularPropertyList = () => {
                 <button
                   key={item.field}
                   onClick={() => handleSort(item.field)}
-                  className={`px-3 py-1.5 text-sm rounded-md transition-all duration-200 ${sortField === item.field
+                  className={`px-3 py-1 text-sm rounded-md transition-all duration-200 ${sortField === item.field
                     ? 'bg-hud-accent-primary text-hud-bg-primary font-medium shadow-sm'
                     : 'text-hud-text-secondary hover:text-hud-text-primary hover:bg-hud-bg-hover'
                     }`}
@@ -756,48 +759,66 @@ const ApartmentRegularPropertyList = () => {
             </Button>
           </div>
         ) : (
-          <>
-            <div className="min-w-[900px]">
+          <HudCard noPadding className="overflow-x-auto">
+            <table className="w-full min-w-[900px]">
               {/* 테이블 헤더 */}
-              <div className="grid grid-cols-12 gap-0 px-5 py-3.5 bg-hud-bg-secondary border-b border-[var(--hud-border-table)] text-xs font-semibold text-hud-text-primary uppercase tracking-wide">
-                <div className="col-span-1 flex items-center justify-center border-r border-[var(--hud-border-table)]">
-                  <button
-                    onClick={toggleSelectAll}
-                    className="p-1.5 hover:bg-hud-bg-hover rounded-md transition-colors"
-                    title={isCurrentPageAllSelected ? '전체 해제' : '전체 선택'}
-                  >
-                    {isCurrentPageAllSelected ? (
-                      <CheckSquare className="w-4 h-4 text-hud-accent-primary" />
-                    ) : (
-                      <Square className="w-4 h-4 text-hud-text-muted" />
-                    )}
-                  </button>
-                </div>
-                <div className="col-span-2 px-3 border-r border-[var(--hud-border-table)]">단지명/매물명</div>
-                <div className="col-span-1 px-3 border-r border-[var(--hud-border-table)]">유형</div>
-                <div className="col-span-1 px-3 border-r border-[var(--hud-border-table)]">거래</div>
-                <div className="col-span-1 px-3 border-r border-[var(--hud-border-table)] text-right cursor-pointer hover:text-hud-accent-primary transition-colors" onClick={() => handleSort('price')}>
-                  가격 {sortField === 'price' && <span className="ml-1">{sortOrder === 'asc' ? '↑' : '↓'}</span>}
-                </div>
-                <div className="col-span-1 px-3 border-r border-[var(--hud-border-table)] text-right">월세</div>
-                <div className="col-span-1 px-3 border-r border-[var(--hud-border-table)] text-right">면적</div>
-                <div className="col-span-1 px-3 border-r border-[var(--hud-border-table)] text-center">층</div>
-                <div className="col-span-1 px-3 border-r border-[var(--hud-border-table)]">저장일시</div>
-                <div className="col-span-1 px-3 text-center">관리</div>
-              </div>
+              <thead>
+                <tr className="bg-hud-bg-secondary border-b-2 border-[var(--hud-border-table)]">
+                  <th className="px-3 py-3 text-center w-10">
+                    <button
+                      onClick={toggleSelectAll}
+                      className="p-1.5 hover:bg-hud-bg-hover rounded-md transition-colors"
+                      title={isCurrentPageAllSelected ? '전체 해제' : '전체 선택'}
+                    >
+                      {isCurrentPageAllSelected ? (
+                        <CheckSquare className="w-4 h-4 text-hud-accent-primary" />
+                      ) : (
+                        <Square className="w-4 h-4 text-hud-text-muted" />
+                      )}
+                    </button>
+                  </th>
+                  <th className="px-3 py-3 text-left text-xs font-semibold text-hud-text-primary uppercase tracking-wide" style={{ width: '200px' }} title="단지명 또는 매물 제목">
+                    단지명/매물명
+                  </th>
+                  <th className="px-3 py-3 text-center text-xs font-semibold text-hud-text-primary uppercase tracking-wide" style={{ width: '80px' }} title="아파트, 오피스텔, 빌라 등 매물 종류">
+                    유형
+                  </th>
+                  <th className="px-3 py-3 text-center text-xs font-semibold text-hud-text-primary uppercase tracking-wide" style={{ width: '70px' }} title="매매, 전세, 월세">
+                    거래
+                  </th>
+                  <th className="px-3 py-3 text-right text-xs font-semibold text-hud-text-primary uppercase tracking-wide cursor-pointer hover:text-hud-accent-primary transition-colors" onClick={() => handleSort('price')} style={{ width: '100px' }} title="매매가 또는 보증금">
+                    가격 {sortField === 'price' && <span className="ml-1">{sortOrder === 'asc' ? '↑' : '↓'}</span>}
+                  </th>
+                  <th className="px-3 py-3 text-right text-xs font-semibold text-hud-text-primary uppercase tracking-wide" style={{ width: '70px' }} title="월세 (만원)">
+                    월세
+                  </th>
+                  <th className="px-3 py-3 text-right text-xs font-semibold text-hud-text-primary uppercase tracking-wide" style={{ width: '70px' }} title="전용면적 (㎡)">
+                    면적
+                  </th>
+                  <th className="px-3 py-3 text-center text-xs font-semibold text-hud-text-primary uppercase tracking-wide" style={{ width: '60px' }} title="해당 층">
+                    층
+                  </th>
+                  <th className="px-3 py-3 text-left text-xs font-semibold text-hud-text-primary uppercase tracking-wide" style={{ width: '120px' }} title="매물 저장 날짜/시간">
+                    저장일시
+                  </th>
+                  <th className="px-3 py-3 text-center text-xs font-semibold text-hud-text-primary uppercase tracking-wide" style={{ width: '60px' }} title="매물 삭제">
+                    관리
+                  </th>
+                </tr>
+              </thead>
 
               {/* 테이블 바디 */}
-              <div className="max-h-[calc(100vh-300px)] overflow-y-auto">
+              <tbody>
                 {currentArticles.map((article, idx) => (
-                  <div
+                  <tr
                     key={article.id}
-                    className={`grid grid-cols-12 gap-0 px-5 py-3.5 border-t border-b border-[var(--hud-border-table)] text-sm transition-all duration-150 ${selectedItems.has(article.id)
-                        ? 'bg-hud-accent-primary/15'
-                        : 'bg-hud-bg-primary hover:bg-hud-bg-hover/80'
+                    className={`border-b border-hud-text-muted/20 text-sm transition-all duration-150 ${selectedItems.has(article.id)
+                      ? 'bg-hud-accent-primary/15'
+                      : 'bg-hud-bg-primary hover:bg-hud-bg-hover/80'
                       }`}
                     style={{ animationDelay: `${idx * 20}ms` }}
                   >
-                    <div className="col-span-1 flex items-center justify-center border-r border-[var(--hud-border-table)]">
+                    <td className="px-3 py-2 text-center">
                       <button
                         onClick={() => toggleSelectItem(article.id)}
                         className="p-1.5 hover:bg-hud-bg-hover rounded-md transition-colors"
@@ -808,21 +829,21 @@ const ApartmentRegularPropertyList = () => {
                           <Square className="w-4 h-4 text-hud-text-muted" />
                         )}
                       </button>
-                    </div>
-                    <div className="col-span-2 px-3 border-r border-[var(--hud-border-table)]">
+                    </td>
+                    <td className="px-3 py-2">
                       <p className="truncate font-medium text-hud-text-primary" title={article.complexName || article.buildingName}>
                         {article.complexName || article.buildingName || '-'}
                       </p>
                       <p className="text-xs text-hud-text-muted truncate mt-0.5" title={article.articleName}>
                         {article.articleName}
                       </p>
-                    </div>
-                    <div className="col-span-1 px-3 border-r border-[var(--hud-border-table)] flex items-center">
+                    </td>
+                    <td className="px-3 py-2 text-center">
                       <span className="text-xs px-2 py-1 bg-hud-bg-secondary rounded-md text-hud-text-secondary">
                         {PROPERTY_TYPES.find((t) => t.code === article.realEstateTypeCode)?.label || article.realEstateTypeName || '-'}
                       </span>
-                    </div>
-                    <div className="col-span-1 px-3 border-r border-[var(--hud-border-table)] flex items-center">
+                    </td>
+                    <td className="px-3 py-2 text-center">
                       <span className={`inline-flex px-2 py-1 text-xs font-medium rounded-md ${article.tradeTypeCode === 'A1'
                         ? 'bg-hud-accent-danger/20 text-hud-accent-danger border border-hud-accent-danger/30'
                         : article.tradeTypeCode === 'B1'
@@ -831,20 +852,20 @@ const ApartmentRegularPropertyList = () => {
                         }`}>
                         {article.tradeTypeName}
                       </span>
-                    </div>
-                    <div className="col-span-1 px-3 border-r border-[var(--hud-border-table)] text-right font-semibold text-hud-accent-primary">
+                    </td>
+                    <td className="px-3 py-2 text-right font-semibold text-hud-accent-primary">
                       {formatPrice(article.dealOrWarrantPrc)}
-                    </div>
-                    <div className="col-span-1 px-3 border-r border-[var(--hud-border-table)] text-right text-hud-text-secondary">
+                    </td>
+                    <td className="px-3 py-2 text-right text-hud-text-secondary">
                       {article.rentPrc ? `${article.rentPrc}만` : '-'}
-                    </div>
-                    <div className="col-span-1 px-3 border-r border-[var(--hud-border-table)] text-right text-hud-text-secondary">
+                    </td>
+                    <td className="px-3 py-2 text-right text-hud-text-secondary">
                       <span>{article.area1 || '-'}㎡</span>
-                    </div>
-                    <div className="col-span-1 px-3 border-r border-[var(--hud-border-table)] text-center text-hud-text-secondary">
+                    </td>
+                    <td className="px-3 py-2 text-center text-hud-text-secondary">
                       {parseFloor(article.floorInfo)}
-                    </div>
-                    <div className="col-span-1 px-3 border-r border-[var(--hud-border-table)] text-xs text-hud-text-muted">
+                    </td>
+                    <td className="px-3 py-2 text-xs text-hud-text-muted">
                       {new Date(article.savedAt).toLocaleString('ko-KR', {
                         year: 'numeric',
                         month: '2-digit',
@@ -852,8 +873,8 @@ const ApartmentRegularPropertyList = () => {
                         hour: '2-digit',
                         minute: '2-digit',
                       })}
-                    </div>
-                    <div className="col-span-1 px-3 flex items-center justify-center">
+                    </td>
+                    <td className="px-3 py-2 text-center">
                       <Button
                         variant="ghost"
                         size="sm"
@@ -862,48 +883,48 @@ const ApartmentRegularPropertyList = () => {
                       >
                         <Trash2 className="w-4 h-4" />
                       </Button>
-                    </div>
-                  </div>
+                    </td>
+                  </tr>
                 ))}
-              </div>
+              </tbody>
+            </table>
 
-              {/* 페이징 */}
-              {totalPages > 1 && (
-                <div className="flex items-center justify-between px-5 py-4 bg-hud-bg-secondary border-t border-[var(--hud-border-table)]">
-                  <div className="text-sm text-hud-text-muted">
-                    <span className="font-medium text-hud-text-primary">{startIndex + 1}-{Math.min(endIndex, processedArticles.length)}</span>
-                    <span className="mx-2">/</span>
-                    <span>전체 {processedArticles.length}건</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                      disabled={currentPage === 1}
-                    >
-                      <ChevronLeft className="w-4 h-4 mr-1" />
-                      이전
-                    </Button>
-                    <div className="flex items-center gap-1 px-3 py-1.5 bg-hud-bg-primary rounded-lg border border-[var(--hud-border-table)]">
-                      <span className="text-sm font-medium text-hud-text-primary">{currentPage}</span>
-                      <span className="text-sm text-hud-text-muted mx-1">/</span>
-                      <span className="text-sm text-hud-text-muted">{totalPages}</span>
-                    </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                      disabled={currentPage === totalPages}
-                    >
-                      다음
-                      <ChevronRight className="w-4 h-4 ml-1" />
-                    </Button>
-                  </div>
+            {/* 페이징 */}
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between px-5 py-4 bg-hud-bg-secondary border-t border-[var(--hud-border-table)]">
+                <div className="text-sm text-hud-text-muted">
+                  <span className="font-medium text-hud-text-primary">{startIndex + 1}-{Math.min(endIndex, processedArticles.length)}</span>
+                  <span className="mx-2">/</span>
+                  <span>전체 {processedArticles.length}건</span>
                 </div>
-              )}
-            </div>
-          </>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                    disabled={currentPage === 1}
+                  >
+                    <ChevronLeft className="w-4 h-4 mr-1" />
+                    이전
+                  </Button>
+                  <div className="flex items-center gap-1 px-3 py-1 bg-hud-bg-primary rounded-lg border border-[var(--hud-border-table)]">
+                    <span className="text-sm font-medium text-hud-text-primary">{currentPage}</span>
+                    <span className="text-sm text-hud-text-muted mx-1">/</span>
+                    <span className="text-sm text-hud-text-muted">{totalPages}</span>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={currentPage === totalPages}
+                  >
+                    다음
+                    <ChevronRight className="w-4 h-4 ml-1" />
+                  </Button>
+                </div>
+              </div>
+            )}
+          </HudCard>
         )}
       </HudCard>
 

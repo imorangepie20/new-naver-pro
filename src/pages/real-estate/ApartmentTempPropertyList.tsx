@@ -505,7 +505,7 @@ const ApartmentTempPropertyList = () => {
   };
 
   return (
-    <div className="container mx-auto p-4">
+    <div className="p-4 sm:p-6">
       {/* 헤더 */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-4">
         <div className="flex items-center gap-4">
@@ -665,115 +665,135 @@ const ApartmentTempPropertyList = () => {
               <p className="text-sm text-hud-text-muted mt-1">다른 거래 방식을 선택해보세요.</p>
             </div>
           ) : (
-            <>
-              {/* 테이블 헤더 */}
-              <div className="grid grid-cols-12 gap-2 px-4 py-3 bg-hud-bg-secondary border-b border-hud-border-secondary text-sm font-medium text-hud-text-primary">
-                <div className="col-span-1 flex items-center">
-                  <button
-                    onClick={toggleSelectAll}
-                    className="p-1 hover:bg-hud-bg-hover rounded"
-                    title={isAllSelected ? '전체 해제' : '전체 선택'}
-                  >
-                    {isAllSelected ? (
-                      <CheckSquare className="w-4 h-4 text-hud-accent-primary" />
-                    ) : (
-                      <Square className="w-4 h-4 text-hud-text-muted" />
-                    )}
-                  </button>
-                </div>
-                <div className="col-span-2">매물명</div>
-                <div className="col-span-1">매물유형</div>
-                <div className="col-span-1">거래</div>
-                <div className="col-span-1 cursor-pointer hover:text-hud-accent-primary" onClick={() => handleSort('price')}>
-                  가격 {sortField === 'price' && (sortOrder === 'asc' ? '↑' : '↓')}
-                </div>
-                <div className="col-span-1">월세</div>
-                <div className="col-span-1 cursor-pointer hover:text-hud-accent-primary" onClick={() => handleSort('area')}>
-                  면적 {sortField === 'area' && (sortOrder === 'asc' ? '↑' : '↓')}
-                </div>
-                <div className="col-span-1 cursor-pointer hover:text-hud-accent-primary" onClick={() => handleSort('floor')}>
-                  층 {sortField === 'floor' && (sortOrder === 'asc' ? '↑' : '↓')}
-                </div>
-                <div className="col-span-1">확정일</div>
-                <div className="col-span-1">태그</div>
-              </div>
-
-              {/* 테이블 바디 - 무한 스크롤 */}
+            <HudCard noPadding className="overflow-x-auto">
               <div ref={scrollContainerRef} className="max-h-[calc(100vh-380px)] overflow-y-auto">
-                {sortedArticles.map((article) => (
-                  <div
-                    key={article.id}
-                    className={`grid grid-cols-12 gap-2 px-4 py-3 border-b border-hud-border-secondary text-sm hover:bg-hud-bg-hover/50 transition-colors bg-hud-bg-primary ${selectedItems.has(article.id) ? 'bg-hud-accent-primary/10' : ''
-                      }`}
-                  >
-                    <div className="col-span-1 flex items-center">
-                      <button
-                        onClick={() => toggleSelectItem(article.id)}
-                        className="p-1 hover:bg-hud-bg-hover rounded"
+                <table className="w-full min-w-[800px]">
+                  {/* 테이블 헤더 */}
+                  <thead>
+                    <tr className="bg-hud-bg-secondary border-b-2 border-[var(--hud-border-table)]">
+                      <th className="px-3 py-3 text-center w-10">
+                        <button
+                          onClick={toggleSelectAll}
+                          className="p-1.5 hover:bg-hud-bg-hover rounded-md transition-colors"
+                          title={isAllSelected ? '전체 해제' : '전체 선택'}
+                        >
+                          {isAllSelected ? (
+                            <CheckSquare className="w-4 h-4 text-hud-accent-primary" />
+                          ) : (
+                            <Square className="w-4 h-4 text-hud-text-muted" />
+                          )}
+                        </button>
+                      </th>
+                      <th className="px-3 py-3 text-left text-xs font-semibold text-hud-text-primary uppercase tracking-wide" style={{ width: '200px' }}>
+                        매물명
+                      </th>
+                      <th className="px-3 py-3 text-left text-xs font-semibold text-hud-text-primary uppercase tracking-wide" style={{ width: '80px' }}>
+                        매물유형
+                      </th>
+                      <th className="px-3 py-3 text-center text-xs font-semibold text-hud-text-primary uppercase tracking-wide" style={{ width: '70px' }}>
+                        거래
+                      </th>
+                      <th className="px-3 py-3 text-right text-xs font-semibold text-hud-text-primary uppercase tracking-wide cursor-pointer hover:text-hud-accent-primary transition-colors" onClick={() => handleSort('price')} style={{ width: '100px' }}>
+                        가격 {sortField === 'price' && <span className="ml-1">{sortOrder === 'asc' ? '↑' : '↓'}</span>}
+                      </th>
+                      <th className="px-3 py-3 text-right text-xs font-semibold text-hud-text-primary uppercase tracking-wide" style={{ width: '70px' }}>
+                        월세
+                      </th>
+                      <th className="px-3 py-3 text-right text-xs font-semibold text-hud-text-primary uppercase tracking-wide cursor-pointer hover:text-hud-accent-primary transition-colors" onClick={() => handleSort('area')} style={{ width: '70px' }}>
+                        면적 {sortField === 'area' && <span className="ml-1">{sortOrder === 'asc' ? '↑' : '↓'}</span>}
+                      </th>
+                      <th className="px-3 py-3 text-center text-xs font-semibold text-hud-text-primary uppercase tracking-wide cursor-pointer hover:text-hud-accent-primary transition-colors" onClick={() => handleSort('floor')} style={{ width: '60px' }}>
+                        층 {sortField === 'floor' && <span className="ml-1">{sortOrder === 'asc' ? '↑' : '↓'}</span>}
+                      </th>
+                      <th className="px-3 py-3 text-center text-xs font-semibold text-hud-text-primary uppercase tracking-wide" style={{ width: '90px' }}>
+                        확정일
+                      </th>
+                      <th className="px-3 py-3 text-left text-xs font-semibold text-hud-text-primary uppercase tracking-wide" style={{ width: '100px' }}>
+                        태그
+                      </th>
+                    </tr>
+                  </thead>
+
+                  {/* 테이블 바디 - 무한 스크롤 */}
+                  <tbody>
+                    {sortedArticles.map((article) => (
+                      <tr
+                        key={article.id}
+                        className={`border-b border-hud-text-muted/20 text-sm transition-all duration-150 ${selectedItems.has(article.id)
+                          ? 'bg-hud-accent-primary/15'
+                          : 'bg-hud-bg-primary hover:bg-hud-bg-hover/80'
+                          }`}
                       >
-                        {selectedItems.has(article.id) ? (
-                          <CheckSquare className="w-4 h-4 text-hud-accent-primary" />
-                        ) : (
-                          <Square className="w-4 h-4 text-hud-text-muted" />
-                        )}
-                      </button>
-                    </div>
-                    <div className="col-span-2">
-                      <p className="truncate text-hud-text-primary" title={article.articleName}>
-                        {article.articleName || article.buildingName || '-'}
-                      </p>
-                      {article.buildingName && article.buildingName !== article.articleName && (
-                        <p className="text-xs text-hud-text-muted truncate" title={article.buildingName}>
-                          {article.buildingName}
-                        </p>
-                      )}
-                    </div>
-                    <div className="col-span-1">
-                      <span className="text-xs text-hud-text-secondary">
-                        {article.realEstateTypeName || realEstateTypeCode}
-                      </span>
-                    </div>
-                    <div className="col-span-1">
-                      <span className={`inline-flex px-1.5 py-0.5 text-xs rounded ${article.tradeTypeCode === 'A1'
-                        ? 'bg-red-100 text-red-700'
-                        : article.tradeTypeCode === 'B1'
-                          ? 'bg-green-100 text-green-700'
-                          : 'bg-yellow-100 text-yellow-700'
-                        }`}>
-                        {article.tradeTypeName}
-                      </span>
-                    </div>
-                    <div className="col-span-1 text-hud-accent-primary font-medium">
-                      {formatPrice(article.dealOrWarrantPrc)}
-                    </div>
-                    <div className="col-span-1 text-hud-text-secondary">
-                      {article.rentPrc ? `${article.rentPrc}만` : '-'}
-                    </div>
-                    <div className="col-span-1 text-hud-text-secondary">
-                      <span>{article.area1 || '-'}㎡</span>
-                    </div>
-                    <div className="col-span-1 text-hud-text-secondary">
-                      {article.floorInfo || '-'}
-                    </div>
-                    <div className="col-span-1 text-hud-text-secondary text-xs">
-                      {article.articleConfirmYmd
-                        ? article.articleConfirmYmd.replace(/(\d{4})(\d{2})(\d{2})/, '$1.$2.$3')
-                        : '-'}
-                    </div>
-                    <div className="col-span-1">
-                      <div className="flex flex-wrap gap-1">
-                        {article.tagList?.slice(0, 1).map((tag, idx) => (
-                          <span key={idx} className="px-1.5 py-0.5 text-xs bg-hud-bg-secondary text-hud-text-secondary rounded truncate max-w-[60px]">
-                            {tag}
+                        <td className="px-3 py-2 text-center">
+                          <button
+                            onClick={() => toggleSelectItem(article.id)}
+                            className="p-1.5 hover:bg-hud-bg-hover rounded-md transition-colors"
+                          >
+                            {selectedItems.has(article.id) ? (
+                              <CheckSquare className="w-4 h-4 text-hud-accent-primary" />
+                            ) : (
+                              <Square className="w-4 h-4 text-hud-text-muted" />
+                            )}
+                          </button>
+                        </td>
+                        <td className="px-3 py-2">
+                          <p className="truncate font-medium text-hud-text-primary" title={article.articleName}>
+                            {article.articleName || article.buildingName || '-'}
+                          </p>
+                          {article.buildingName && article.buildingName !== article.articleName && (
+                            <p className="text-xs text-hud-text-muted truncate mt-0.5" title={article.buildingName}>
+                              {article.buildingName}
+                            </p>
+                          )}
+                        </td>
+                        <td className="px-3 py-2">
+                          <span className="text-xs px-2 py-1 bg-hud-bg-secondary rounded-md text-hud-text-secondary">
+                            {article.realEstateTypeName || realEstateTypeCode}
                           </span>
-                        ))}
-                        {article.tagList?.length > 1 && (
-                          <span className="text-xs text-hud-text-muted">+{article.tagList.length - 1}</span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ))}
+                        </td>
+                        <td className="px-3 py-2 text-center">
+                          <span className={`inline-flex px-2 py-1 text-xs font-medium rounded-md ${article.tradeTypeCode === 'A1'
+                            ? 'bg-hud-accent-danger/20 text-hud-accent-danger border border-hud-accent-danger/30'
+                            : article.tradeTypeCode === 'B1'
+                              ? 'bg-hud-accent-success/20 text-hud-accent-success border border-hud-accent-success/30'
+                              : 'bg-hud-accent-warning/20 text-hud-accent-warning border border-hud-accent-warning/30'
+                            }`}>
+                            {article.tradeTypeName}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 text-right font-semibold text-hud-accent-primary">
+                          {formatPrice(article.dealOrWarrantPrc)}
+                        </td>
+                        <td className="px-3 py-2 text-right text-hud-text-secondary">
+                          {article.rentPrc ? `${article.rentPrc}만` : '-'}
+                        </td>
+                        <td className="px-3 py-2 text-right text-hud-text-secondary">
+                          <span>{article.area1 || '-'}㎡</span>
+                        </td>
+                        <td className="px-3 py-2 text-center text-hud-text-secondary">
+                          {article.floorInfo || '-'}
+                        </td>
+                        <td className="px-3 py-2 text-center text-hud-text-secondary text-xs">
+                          {article.articleConfirmYmd
+                            ? article.articleConfirmYmd.replace(/(\d{4})(\d{2})(\d{2})/, '$1.$2.$3')
+                            : '-'}
+                        </td>
+                        <td className="px-3 py-2">
+                          <div className="flex flex-wrap gap-1">
+                            {article.tagList?.slice(0, 1).map((tag, idx) => (
+                              <span key={idx} className="px-1.5 py-0.5 text-xs bg-hud-bg-secondary text-hud-text-secondary rounded truncate max-w-[60px]">
+                                {tag}
+                              </span>
+                            ))}
+                            {article.tagList?.length > 1 && (
+                              <span className="text-xs text-hud-text-muted">+{article.tagList.length - 1}</span>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
 
                 {/* 무한 스크롤 트리거 요소 */}
                 <div ref={loadMoreTriggerRef} className="py-2 min-h-[50px]">
@@ -792,12 +812,12 @@ const ApartmentTempPropertyList = () => {
               </div>
 
               {/* 하단 정보 바 */}
-              <div className="flex items-center justify-between px-4 py-2 bg-hud-bg-secondary border-t border-hud-border-secondary">
+              <div className="flex items-center justify-between px-5 py-4 bg-hud-bg-secondary border-t border-[var(--hud-border-table)]">
                 <div className="text-sm text-hud-text-muted">
                   {sortedArticles.length}건{hasMore && ' (스크롤하여 더보기)'}
                 </div>
               </div>
-            </>
+            </HudCard>
           )}
         </HudCard>
       )}

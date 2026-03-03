@@ -64,7 +64,10 @@ import TempPropertyList from './pages/real-estate/TempPropertyList'
 import ComplexListPage from './pages/real-estate/ComplexListPage'
 import ApartmentTempPropertyList from './pages/real-estate/ApartmentTempPropertyList'
 import ApartmentRegularPropertyList from './pages/real-estate/ApartmentRegularPropertyList'
+import UploadedPropertyList from './pages/real-estate/UploadedPropertyList'
 import PropertyRegister from './pages/real-estate/PropertyRegister'
+import FavoritePropertyList from './pages/real-estate/FavoritePropertyList'
+import ManagedPropertyList from './pages/real-estate/ManagedPropertyList'
 
 // Misc Pages
 import Error404 from './pages/Error404'
@@ -171,7 +174,10 @@ function App() {
                     <Route path="real-estate/officetels" element={<ComplexListPage propertyType="OPST" />} />
                     <Route path="real-estate/apartment-temp-properties" element={<ApartmentTempPropertyList />} />
                     <Route path="real-estate/regular-properties" element={<ApartmentRegularPropertyList />} />
+                    <Route path="real-estate/uploaded-properties" element={<UploadedPropertyList />} />
                     <Route path="real-estate/register" element={<PropertyRegister />} />
+                    <Route path="real-estate/favorites" element={<FavoritePropertyList />} />
+                    <Route path="real-estate/managed" element={<ManagedPropertyList />} />
                 </Route>
 
                 {/* 404 Fallback */}

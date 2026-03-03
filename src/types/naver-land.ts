@@ -143,6 +143,8 @@ export interface Article {
   cpPcArticleLinkUseAtCpNameYn: boolean;
   realtorName?: string;               // 중개사명
   realtorId?: string;                 // 중개사 ID
+  managerName?: string;               // 책임자 이름
+  managerPhone?: string;              // 책임자 전화번호
 
   // 추가 정보
   siteImageCount: number;

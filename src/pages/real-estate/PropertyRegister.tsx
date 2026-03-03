@@ -1377,10 +1377,10 @@ const PropertyRegister = () => {
                                         <Button
                                             variant="secondary"
                                             size="sm"
-                                            onClick={() => navigate('/real-estate/regular-properties')}
+                                            onClick={() => navigate('/real-estate/uploaded-properties')}
                                             className="flex-1"
                                         >
-                                            저장된 매물 보기
+                                            업로드한 매물 보기
                                         </Button>
                                         <Button
                                             variant="outline"
