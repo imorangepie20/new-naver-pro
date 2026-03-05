@@ -1,144 +1,108 @@
-# 프로젝트 현황 기록
+# 현재 작업 상태
 
-> 최종 업데이트: 2026-03-04 (관리매물 UI 개선 완료)
+> 최종 업데이트: 2026-03-05 (Railway 배포 완료)
 
----
-
-## 최근 활동
-
-### 2026-03-04: 관리매물 리스트 UI 개선 완료 ✅
-- 숫자 입력 스피너 제거 (계약금/중도금/잔금 필드)
-- 커서 포커스 이슈 해결 (useMemo 제거, 인라인 입력 사용)
-- "재계약 알림 필터" → "계약사항알림" 텍스트로 변경
-- 반응형 UI 구현 (데스크톱: 테이블, 모바일: 카드)
-- 건물명 필드 삭제
-- 메모 필드 삭제 (화면 표시에서만)
-- 상태 필터 삭제 (전체/활성/만료/갱신)
-
-### 2026-03-03: 업로드한 매물 목록 수정 기능 완료
-- 관리 컬럼에 수정 버튼 (연필 아이콘) 추가
-- 매물 수정 모달 UI 구현 (기본정보, 가격정보, 상세정보, 담당자정보, 매물특징)
-- PUT /api/properties/:id API 연동
-- 관리 컬럼 너비 확장 (60px → 100px, 4개 버튼 수용)
-
-### 2026-03-03: 매물목록 → 관심매물/관리매물 등록 로직 시뮬레이션
-
-#### 목적
-- 업로드한 매물 목록(UploadedPropertyList)에서 개별 매물을 관심매물 또는 관리매물로 등록하는 기능 설계
-- 네이버 데이터와 독립적인 매물 관리 로직
-
-#### 대상 페이지
-- **파일**: `src/pages/real-estate/UploadedPropertyList.tsx`
-- **경로**: `/real-estate/uploaded` (매물목록)
-- **데이터 소스**: `dataSource=UPLOAD` (파일 업로드/수동 입력)
-
-#### 시뮬레이션 내용
-
-**1. 관심매물 등록 (❤️ 버튼)**
-- 데이터 변환: `UploadedArticle` → `FavoriteProperty`
-- API: `POST /api/favorite-properties`
-- 즉시 등록 (모달 없음)
-- 담당자 정보를 메모에 자동 포함
-
-**2. 관리매물 등록 (📋 버튼)**
-- 데이터 변환: `UploadedArticle` → `ManagedProperty`
-- API: `POST /api/managed-properties`
-- 모달 표시 후 추가 정보 입력 (세입자, 납부일정 등)
-- 계약 만료일 자동 계산 (매매: 3개월, 전세/월세: 2년)
-
-#### UI 변경 사항
-```tsx
-// 관리 컬럼에 버튼 추가
-<td className="px-3 py-2 text-center">
-  <div className="flex items-center justify-center gap-1">
-    <Button onClick={() => deleteItem(article.id)}><Trash2 /></Button>
-    <button onClick={() => addToFavorite(article)}><Heart /></button>
-    <button onClick={() => addToManaged(article)}><ClipboardList /></button>
-  </div>
-</td>
-```
-
-#### 데이터 매핑
-| UploadedArticle | → | FavoriteProperty | ManagedProperty |
-|-----------------|---|------------------|----------------|
-| articleName | → | articleName | articleName |
-| buildingName | → | buildingName | buildingName |
-| detailAddress | → | address | address |
-| realEstateTypeName | → | propertyType | - |
-| tradeTypeName | → | tradeType | contractType |
-| dealOrWarrantPrc | → | price | totalPrice/ depositAmount |
-| area1 | → | area | - |
-| managerName | → | notes | managerName |
-| managerPhone | → | notes | managerPhone |
-
----
+## 완료된 작업 ✅
+- **스마트 고급 캘린더 완료** (2026-03-04)
+  - 다중 뷰 전환 (월간/주간/일간/리스트)
+  - AI 기반 스마트 일정 분류 (제목/설명 자동 분석)
+  - 일정 충돌 감지 및 경고
+  - 반복 일정 기능 (매일/매주/매월/매년)
+  - 드래그 & 드롭 지원
+  - 키보드 단축키 (N: 새 일정, T: 오늘, M/W/D/L: 뷰 전환, ←→: 이전/다음)
+  - 빠른 통계 카드 (이번 달/오늘/반복/회의 일정 수)
+  - 우선순위 설정 (낮음/보통/높음/긴급)
+  - 공휴일 표시
+  - DB 스키마 확장 (반복 일정, 우선순위, 색상, 참여자, 상태 필드 추가)
+  - 파일: `src/pages/Calendar.tsx`, `prisma/schema.prisma`
+- **대시보드 재작성 완료** (2026-03-04)
+  - 총 매물수, 관심 매물수, 관리 매물수 StatCard
+  - 최근 10일 등록 매물 목록
+  - 최근 10일 등록 관심 매물 목록
+  - 최근 10일 등록 관리 매물 목록
+  - 최근 30일 계약 매물 목록
+  - 오늘의 일정 표시
+  - 최근 거래 금액 추이 차트
+  - 빠른 링크 섹션
+- **일정(Schedule) 기능 추가 완료** (2026-03-04)
+  - Schedule DB 모델 추가 (prisma/schema.prisma)
+  - 일정 CRUD API (/api/schedules)
+  - 캘린더 페이지 API 연동
+  - 일정 생성/수정/삭제 기능
+  - 날짜별 일정 조회
+  - date-fns 기반 동적 달력
+- **테이블 UI 통일 및 반응형 개선 완료**
+- **매물 목록 테이블 스타일 통일 완료** (2026-03-04)
+- **매물 목록 컬럼 구조 통일 완료** (2026-03-04)
+- **단지 다중 선택 후 임시 매물 페이지에서 보기 기능** (2026-03-04)
+- **스마트 파싱 기능 추가** (2026-03-04)
+  - papaparse 도입으로 안정적 CSV 파싱
+  - PDF 지원 (pdfjs-dist)
+  - 로컬 AI 파싱 (Transformers.js)
+  - Claude/OpenAI API 옵션
+- **정규 매물 목록 전체 삭제 프로그래스 바 구현** (2026-03-04)
+  - 배치 처리 (10개씩 병렬 삭제)
+  - 실시간 진행률 표시 모달
+  - 삭제된 항목 실시간 반영
+- **설정 페이지 데이터 관리 섹션 추가** (2026-03-04)
+  - 프로필 삭제 기능
+  - 캘린더 데이터 삭제 기능
+  - 삭제 진행 상태 표시
+  - 경고 안내 및 확인 다이얼로그
+- **프로필 상세 주소 필드 추가** (2026-03-05)
+  - User 모델에 detailAddress 필드 추가
+  - Settings.tsx에 상세 주소 입력 필드 추가
+  - API(GET/PUT)에서 detailAddress 처리 추가
+  - 파일: `prisma/schema.prisma`, `src/pages/Settings.tsx`, `src/server/index.ts`
+- **Railway 배포 완료** (2026-03-05)
+  - 배포 URL: https://web-production-e567c.up.railway.app
+  - Dockerfile 기반 배포 (Bun 런타임)
+  - Puppeteer Chromium 포함
+  - Healthcheck: /api/health
+  - Vite 정적 파일 서빙 + API 서버
 
 ## 진행 중인 작업
-
-- 없음 (모든 작업 완료)
-
----
-
-## 구현된 기능
-
-### 매물 관리
-- 매물 등록 (파일 업로드: TXT, CSV, Excel)
-- 업로드한 매물 목록 조회
-- 정규 매물 목록 조회
-- 매물 삭제 (개별/선택/전체)
-- 엑셀 내보내기 (필드 선택 가능)
-
-### 관심매물 (FavoriteProperty)
-- CRUD 완료
-- 독립 테이블 (네이버 데이터 무관)
-- 파일: `src/pages/real-estate/FavoritePropertyList.tsx`
-
-### 관리매물 (ManagedProperty)
-- CRUD 완료
-- 계약 관리 (계약금/중도금/잔금)
-- 재계약 알림 (D-day 카운트다운)
-- 독립 테이블 (네이버 데이터 무관)
-- 파일: `src/pages/real-estate/ManagedPropertyList.tsx`
+- 없음
 
 ---
 
-## API 엔드포인트
+## 스마트 캘린더 기능 상세
 
-### 관심매물
-| 메서드 | 경로 | 설명 |
-|--------|------|------|
-| GET | /api/favorite-properties | 목록 조회 |
-| POST | /api/favorite-properties | 등록 |
-| PUT | /api/favorite-properties/:id | 수정 |
-| DELETE | /api/favorite-properties/:id | 삭제 |
+### 추가된 라이브러리
+```bash
+npm install framer-motion react-hotkeys-hook
+```
 
-### 관리매물
-| 메서드 | 경로 | 설명 |
-|--------|------|------|
-| GET | /api/managed-properties | 목록 조회 |
-| POST | /api/managed-properties | 등록 |
-| PUT | /api/managed-properties/:id | 수정 |
-| DELETE | /api/managed-properties/:id | 삭제 |
+### 키보드 단축키
+| 단축키 | 기능 |
+|--------|------|
+| N | 새 일정 추가 |
+| T | 오늘로 이동 |
+| M | 월간 뷰 |
+| W | 주간 뷰 |
+| D | 일간 뷰 |
+| L | 리스트 뷰 |
+| ← | 이전 달 |
+| → | 다음 달 |
 
-### 매물 (중앙 DB)
-| 메서드 | 경로 | 설명 |
-|--------|------|------|
-| GET | /api/properties?dataSource=UPLOAD | 업로드 매물 조회 |
-| POST | /api/properties/bulk | 일괄 등록 |
-| DELETE | /api/properties/:id | 삭제 |
+### AI 자동 분류 패턴
+- **회의**: 회의, 미팅, 모임, 협의, 점검, review, meeting
+- **발표**: 발표, 프레젠테이션, 설명회, 데모, presentation
+- **업무**: 업무, 작업, 처리, 완료, 보고, task
+- **이벤트**: 행사, 파티, 연회, 기념일, 축하, event
+- **휴식**: 휴식, 식사, 점심, 저녁, 휴가, break
+- **긴급**: 긴급, 즉시, 바로, 촉급, urgent, asap
 
------------------------------------------
-** 전체 매물 필드 **
-매물명 거래타입 매물유형 매매가/보증금(만원) 월세(만원)
-공급면적(㎡) 전용면적(㎡) 층수 방향 확정일 건물명 주소 매물설명
-태그 중개업소 중개사
-책임자명 책임자전화번호
------------------------------------------
+### 우선순위별 색상
+- 낮음: 회색
+- 보통: 노란색
+- 높음: 주황색
+- 긴급: 빨간색
 
-
-## 다음 작업 예정
-
-1. UploadedPropertyList에 관심매물/관리매물 등록 버튼 추가
-2. 관심매물 등록 함수 구현
-3. 관리매물 등록 모달 구현
-4. 기능 테스트
+### 일정 유형별 색상
+- 회의: 파란색
+- 발표: 보라색
+- �무: 노란색
+- 이벤트: 청록색
+- 휴식: 초록색
+- 긴급: 빨간색

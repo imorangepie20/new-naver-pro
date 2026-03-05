@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
     User,
     Bell,
@@ -15,16 +15,27 @@ import {
     Coffee,
     Check,
     Sparkles,
+    Trash2,
+    Database,
+    Calendar,
+    AlertTriangle,
+    Loader2,
+    MapPin,
+    Building2,
+    Save,
+    X,
 } from 'lucide-react'
 import HudCard from '../components/common/HudCard'
 import Button from '../components/common/Button'
 import { useThemeStore, AccentColor, ThemeMode, FontSize, BorderRadius, ACCENT_COLORS } from '../stores/themeStore'
+import { API_BASE } from '../lib/api'
 
 const settingsSections = [
     { id: 'profile', label: '프로필', icon: <User size={18} /> },
     { id: 'notifications', label: '알림', icon: <Bell size={18} /> },
     { id: 'security', label: '보안', icon: <Lock size={18} /> },
     { id: 'appearance', label: '외관', icon: <Palette size={18} /> },
+    { id: 'data', label: '데이터 관리', icon: <Database size={18} /> },
     { id: 'language', label: '언어', icon: <Globe size={18} /> },
     { id: 'privacy', label: '개인정보', icon: <Shield size={18} /> },
     { id: 'billing', label: '결제', icon: <CreditCard size={18} /> },
@@ -48,6 +59,532 @@ const borderRadii: { value: BorderRadius; label: string; preview: string }[] = [
     { value: 'medium', label: '보통', preview: 'rounded-lg' },
     { value: 'rounded', label: '둥글게', preview: 'rounded-2xl' },
 ]
+
+// ============================================
+// 프로필 섹션 컴포넌트
+// ============================================
+
+interface ProfileData {
+    name: string
+    email: string
+    phone: string
+    zipCode: string
+    address: string
+    detailAddress: string
+    companyName: string
+    businessNumber: string
+}
+
+const ProfileSection = () => {
+    const [profile, setProfile] = useState<ProfileData>({
+        name: '',
+        email: '',
+        phone: '',
+        zipCode: '',
+        address: '',
+        detailAddress: '',
+        companyName: '',
+        businessNumber: '',
+    })
+    const [isLoading, setIsLoading] = useState(true)
+    const [isSaving, setIsSaving] = useState(false)
+    const [saveMessage, setSaveMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+    const [showDaumPostcode, setShowDaumPostcode] = useState(false)
+
+    // 프로필 로드
+    useEffect(() => {
+        const fetchProfile = async () => {
+            try {
+                const headers = { 'x-user-id': 'temp-user' }
+                const res = await fetch(`${API_BASE}/api/user/profile`, { headers })
+
+                if (res.ok) {
+                    const data = await res.json()
+                    setProfile({
+                        name: data.name || '',
+                        email: data.email || '',
+                        phone: data.phone || '',
+                        zipCode: data.zipCode || '',
+                        address: data.address || '',
+                        detailAddress: data.detailAddress || '',
+                        companyName: data.companyName || '',
+                        businessNumber: data.businessNumber || '',
+                    })
+                }
+            } catch (error) {
+                console.error('프로필 로드 실패:', error)
+            } finally {
+                setIsLoading(false)
+            }
+        }
+
+        fetchProfile()
+    }, [])
+
+    // 프로필 저장
+    const handleSave = async () => {
+        setIsSaving(true)
+        setSaveMessage(null)
+
+        try {
+            const headers = {
+                'x-user-id': 'temp-user',
+                'Content-Type': 'application/json',
+            }
+            const res = await fetch(`${API_BASE}/api/user/profile`, {
+                method: 'PUT',
+                headers,
+                body: JSON.stringify(profile),
+            })
+
+            if (res.ok) {
+                setSaveMessage({ type: 'success', text: '프로필이 저장되었습니다.' })
+                setTimeout(() => setSaveMessage(null), 3000)
+            } else {
+                setSaveMessage({ type: 'error', text: '저장에 실패했습니다. 다시 시도해주세요.' })
+            }
+        } catch (error) {
+            console.error('프로필 저장 실패:', error)
+            setSaveMessage({ type: 'error', text: '저장에 실패했습니다. 다시 시도해주세요.' })
+        } finally {
+            setIsSaving(false)
+        }
+    }
+
+    // 다음 우편번호 검색 완료 핸들러
+    const handlePostcodeComplete = (data: any) => {
+        setProfile(prev => ({
+            ...prev,
+            zipCode: data.zonecode,
+            address: data.address,
+        }))
+        setShowDaumPostcode(false)
+    }
+
+    // 다음 우편번호 스크립트 로드 및 초기화
+    useEffect(() => {
+        const loadDaumPostcode = () => {
+            const script = document.createElement('script')
+            script.src = '//t1.daumcdn.net/mapjsapi/bundle/postcode/prod/postcode.v2.js'
+            script.async = true
+            document.body.appendChild(script)
+        }
+
+        // 스크립트가 없으면 로드
+        if (!document.querySelector('script[src*="postcode.v2.js"]')) {
+            loadDaumPostcode()
+        }
+
+        // 모달이 열릴 때 우편번호 검색 실행
+        if (showDaumPostcode && typeof window !== 'undefined') {
+            const daum = (window as any).daum
+            if (daum && daum.Postcode) {
+                new daum.Postcode({
+                    oncomplete: handlePostcodeComplete,
+                    width: '100%',
+                    height: '100%',
+                }).embed(document.getElementById('daum-postcode')!)
+            }
+        }
+    }, [showDaumPostcode])
+
+    if (isLoading) {
+        return (
+            <HudCard title="프로필 설정" subtitle="중개사 정보를 관리하세요">
+                <div className="flex items-center justify-center py-12">
+                    <Loader2 className="w-8 h-8 animate-spin text-hud-accent-primary" />
+                </div>
+            </HudCard>
+        )
+    }
+
+    return (
+        <div className="space-y-6">
+            {/* 다음 우편번호 검색 모달 */}
+            {showDaumPostcode && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+                    <div className="bg-hud-bg-secondary rounded-xl border border-hud-border-primary w-full max-w-lg overflow-hidden">
+                        <div className="flex items-center justify-between p-4 border-b border-hud-border-secondary">
+                            <h3 className="text-lg font-semibold text-hud-text-primary">우편번호 검색</h3>
+                            <button
+                                onClick={() => setShowDaumPostcode(false)}
+                                className="p-1 rounded-lg hover:bg-hud-bg-hover text-hud-text-muted"
+                            >
+                                <X size={20} />
+                            </button>
+                        </div>
+                        <div id="daum-postcode" className="h-[500px]" />
+                    </div>
+                </div>
+            )}
+
+            {/* 기본 정보 카드 */}
+            <HudCard title="기본 정보" subtitle="이름과 연락처 정보를 입력하세요">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label className="flex items-center gap-2 text-sm font-medium text-hud-text-secondary mb-2">
+                            <User size={16} />
+                            이름 *
+                        </label>
+                        <input
+                            type="text"
+                            value={profile.name}
+                            onChange={(e) => setProfile({ ...profile, name: e.target.value })}
+                            placeholder="홍길동"
+                            className="w-full px-4 py-2.5 bg-hud-bg-primary border border-hud-border-primary rounded-lg text-hud-text-primary placeholder:text-hud-text-muted focus:outline-none focus:border-hud-accent-primary focus:ring-1 focus:ring-hud-accent-primary"
+                        />
+                    </div>
+                    <div>
+                        <label className="flex items-center gap-2 text-sm font-medium text-hud-text-secondary mb-2">
+                            <Mail size={16} />
+                            이메일 *
+                        </label>
+                        <input
+                            type="email"
+                            value={profile.email}
+                            onChange={(e) => setProfile({ ...profile, email: e.target.value })}
+                            placeholder="example@email.com"
+                            className="w-full px-4 py-2.5 bg-hud-bg-primary border border-hud-border-primary rounded-lg text-hud-text-primary placeholder:text-hud-text-muted focus:outline-none focus:border-hud-accent-primary focus:ring-1 focus:ring-hud-accent-primary"
+                        />
+                    </div>
+                    <div className="md:col-span-2">
+                        <label className="flex items-center gap-2 text-sm font-medium text-hud-text-secondary mb-2">
+                            <Smartphone size={16} />
+                            휴대폰 *
+                        </label>
+                        <input
+                            type="tel"
+                            value={profile.phone}
+                            onChange={(e) => setProfile({ ...profile, phone: e.target.value })}
+                            placeholder="010-1234-5678"
+                            className="w-full px-4 py-2.5 bg-hud-bg-primary border border-hud-border-primary rounded-lg text-hud-text-primary placeholder:text-hud-text-muted focus:outline-none focus:border-hud-accent-primary focus:ring-1 focus:ring-hud-accent-primary"
+                        />
+                    </div>
+                </div>
+            </HudCard>
+
+            {/* 중개업소 정보 카드 */}
+            <HudCard title="중개업소 정보" subtitle="중개업소 주소와 상호 정보를 입력하세요">
+                <div className="space-y-4">
+                    <div>
+                        <label className="flex items-center gap-2 text-sm font-medium text-hud-text-secondary mb-2">
+                            <Building2 size={16} />
+                            상호 (중개업소명) *
+                        </label>
+                        <input
+                            type="text"
+                            value={profile.companyName}
+                            onChange={(e) => setProfile({ ...profile, companyName: e.target.value })}
+                            placeholder="OO부동산"
+                            className="w-full px-4 py-2.5 bg-hud-bg-primary border border-hud-border-primary rounded-lg text-hud-text-primary placeholder:text-hud-text-muted focus:outline-none focus:border-hud-accent-primary focus:ring-1 focus:ring-hud-accent-primary"
+                        />
+                    </div>
+                    <div>
+                        <label className="flex items-center gap-2 text-sm font-medium text-hud-text-secondary mb-2">
+                            <Shield size={16} />
+                            사업자등록번호
+                        </label>
+                        <input
+                            type="text"
+                            value={profile.businessNumber}
+                            onChange={(e) => setProfile({ ...profile, businessNumber: e.target.value })}
+                            placeholder="123-45-67890"
+                            className="w-full px-4 py-2.5 bg-hud-bg-primary border border-hud-border-primary rounded-lg text-hud-text-primary placeholder:text-hud-text-muted focus:outline-none focus:border-hud-accent-primary focus:ring-1 focus:ring-hud-accent-primary"
+                        />
+                    </div>
+
+                    {/* 주소 검색 */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="md:col-span-1">
+                            <label className="flex items-center gap-2 text-sm font-medium text-hud-text-secondary mb-2">
+                                <MapPin size={16} />
+                                우편번호 *
+                            </label>
+                            <div className="flex gap-2">
+                                <input
+                                    type="text"
+                                    value={profile.zipCode}
+                                    readOnly
+                                    placeholder="우편번호"
+                                    className="flex-1 px-4 py-2.5 bg-hud-bg-primary border border-hud-border-primary rounded-lg text-hud-text-primary placeholder:text-hud-text-muted"
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => setShowDaumPostcode(true)}
+                                    className="px-4 py-2.5 bg-hud-accent-primary/20 hover:bg-hud-accent-primary/30 text-hud-accent-primary border border-hud-accent-primary/50 rounded-lg transition-hud text-sm font-medium whitespace-nowrap"
+                                >
+                                    주소 검색
+                                </button>
+                            </div>
+                        </div>
+                        <div className="md:col-span-2">
+                            <label className="block text-sm font-medium text-hud-text-secondary mb-2">
+                                주소 *
+                            </label>
+                            <input
+                                type="text"
+                                value={profile.address}
+                                readOnly
+                                placeholder="주소 검색 후 자동 입력"
+                                className="w-full px-4 py-2.5 bg-hud-bg-primary border border-hud-border-primary rounded-lg text-hud-text-primary placeholder:text-hud-text-muted"
+                            />
+                        </div>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-hud-text-secondary mb-2">
+                            상세 주소
+                        </label>
+                        <input
+                            type="text"
+                            value={profile.detailAddress}
+                            onChange={(e) => setProfile({ ...profile, detailAddress: e.target.value })}
+                            placeholder="동/호수 등 상세 주소 입력"
+                            className="w-full px-4 py-2.5 bg-hud-bg-primary border border-hud-border-primary rounded-lg text-hud-text-primary placeholder:text-hud-text-muted focus:outline-none focus:border-hud-accent-primary focus:ring-1 focus:ring-hud-accent-primary"
+                        />
+                    </div>
+                </div>
+            </HudCard>
+
+            {/* 저장 버튼 및 메시지 */}
+            <div className="flex items-center justify-between">
+                {saveMessage && (
+                    <div className={`flex items-center gap-2 px-4 py-2 rounded-lg ${
+                        saveMessage.type === 'success'
+                            ? 'bg-hud-accent-success/10 text-hud-accent-success'
+                            : 'bg-hud-accent-danger/10 text-hud-accent-danger'
+                    }`}>
+                        {saveMessage.type === 'success' ? (
+                            <Check size={16} />
+                        ) : (
+                            <AlertTriangle size={16} />
+                        )}
+                        <span className="text-sm">{saveMessage.text}</span>
+                    </div>
+                )}
+                <div className="ml-auto">
+                    <Button
+                        variant="primary"
+                        glow
+                        onClick={handleSave}
+                        disabled={isSaving}
+                        leftIcon={isSaving ? undefined : <Save size={18} />}
+                    >
+                        {isSaving ? (
+                            <>
+                                <Loader2 size={18} className="animate-spin" />
+                                저장 중...
+                            </>
+                        ) : (
+                            '프로필 저장'
+                        )}
+                    </Button>
+                </div>
+            </div>
+        </div>
+    )
+}
+
+// ============================================
+// 데이터 관리 섹션 컴포넌트
+// ============================================
+const DataManagementSection = () => {
+    const [isDeletingProfile, setIsDeletingProfile] = useState(false);
+    const [isDeletingCalendar, setIsDeletingCalendar] = useState(false);
+    const [deleteResult, setDeleteResult] = useState<{ type: 'profile' | 'calendar'; success: boolean } | null>(null);
+
+    // 프로필 삭제 핸들러
+    const handleDeleteProfile = async () => {
+        if (!confirm('정말로 프로필을 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.')) return;
+
+        setIsDeletingProfile(true);
+        setDeleteResult(null);
+
+        try {
+            const response = await fetch(`${API_BASE}/api/user/profile`, {
+                method: 'DELETE',
+                headers: { 'x-user-id': 'temp-user' },
+            });
+
+            if (response.ok) {
+                setDeleteResult({ type: 'profile', success: true });
+                setTimeout(() => {
+                    window.location.href = '/login';
+                }, 2000);
+            } else {
+                setDeleteResult({ type: 'profile', success: false });
+            }
+        } catch (error) {
+            console.error('프로필 삭제 실패:', error);
+            setDeleteResult({ type: 'profile', success: false });
+        } finally {
+            setIsDeletingProfile(false);
+        }
+    };
+
+    // 캘린더 삭제 핸들러
+    const handleDeleteCalendar = async () => {
+        if (!confirm('정말로 캘린더 데이터를 모두 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.')) return;
+
+        setIsDeletingCalendar(true);
+        setDeleteResult(null);
+
+        try {
+            const response = await fetch(`${API_BASE}/api/user/calendar`, {
+                method: 'DELETE',
+                headers: { 'x-user-id': 'temp-user' },
+            });
+
+            if (response.ok) {
+                setDeleteResult({ type: 'calendar', success: true });
+            } else {
+                setDeleteResult({ type: 'calendar', success: false });
+            }
+        } catch (error) {
+            console.error('캘린더 삭제 실패:', error);
+            setDeleteResult({ type: 'calendar', success: false });
+        } finally {
+            setIsDeletingCalendar(false);
+        }
+    };
+
+    return (
+        <div className="space-y-6">
+            {/* 경고 안내 */}
+            <HudCard className="border-l-4 border-l-hud-accent-danger">
+                <div className="flex items-start gap-4">
+                    <div className="p-3 bg-hud-accent-danger/10 rounded-xl">
+                        <AlertTriangle className="w-6 h-6 text-hud-accent-danger" />
+                    </div>
+                    <div className="flex-1">
+                        <h3 className="text-lg font-semibold text-hud-text-primary mb-1">데이터 삭제 경고</h3>
+                        <p className="text-sm text-hud-text-muted">
+                            삭제된 데이터는 복구할 수 없습니다. 신중하게 진행해 주세요.
+                        </p>
+                    </div>
+                </div>
+            </HudCard>
+
+            {/* 프로필 삭제 */}
+            <HudCard title="프로필 삭제" subtitle="계정과 관련된 모든 데이터를 삭제합니다">
+                <div className="space-y-4">
+                    <div className="flex items-center justify-between p-5 bg-hud-bg-primary rounded-xl border border-hud-border-secondary">
+                        <div className="flex items-center gap-4">
+                            <div className="p-3 bg-hud-accent-danger/10 rounded-xl">
+                                <User className="w-6 h-6 text-hud-accent-danger" />
+                            </div>
+                            <div>
+                                <h4 className="text-base font-semibold text-hud-text-primary">프로필 삭제</h4>
+                                <p className="text-sm text-hud-text-muted mt-1">
+                                    계정 정보, 개인 설정, 모든 개인 데이터가 영구적으로 삭제됩니다.
+                                </p>
+                            </div>
+                        </div>
+                        <Button
+                            variant="danger"
+                            size="sm"
+                            onClick={handleDeleteProfile}
+                            disabled={isDeletingProfile}
+                            className="flex items-center gap-2"
+                        >
+                            {isDeletingProfile ? (
+                                <>
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                    삭제 중...
+                                </>
+                            ) : (
+                                <>
+                                    <Trash2 className="w-4 h-4" />
+                                    프로필 삭제
+                                </>
+                            )}
+                        </Button>
+                    </div>
+
+                    {/* 삭제 결과 메시지 */}
+                    {deleteResult?.type === 'profile' && (
+                        <div className={`p-4 rounded-xl ${deleteResult.success
+                            ? 'bg-hud-accent-success/10 border border-hud-accent-success/30'
+                            : 'bg-hud-accent-danger/10 border border-hud-accent-danger/30'
+                            }`}>
+                            <p className={`text-sm ${deleteResult.success ? 'text-hud-accent-success' : 'text-hud-accent-danger'}`}>
+                                {deleteResult.success
+                                    ? '프로필이 삭제되었습니다. 로그아웃됩니다...'
+                                    : '프로필 삭제에 실패했습니다. 다시 시도해 주세요.'}
+                            </p>
+                        </div>
+                    )}
+                </div>
+            </HudCard>
+
+            {/* 캘린더 데이터 삭제 */}
+            <HudCard title="캘린더 데이터 삭제" subtitle="모든 일정과 이벤트 데이터를 삭제합니다">
+                <div className="space-y-4">
+                    <div className="flex items-center justify-between p-5 bg-hud-bg-primary rounded-xl border border-hud-border-secondary">
+                        <div className="flex items-center gap-4">
+                            <div className="p-3 bg-hud-accent-warning/10 rounded-xl">
+                                <Calendar className="w-6 h-6 text-hud-accent-warning" />
+                            </div>
+                            <div>
+                                <h4 className="text-base font-semibold text-hud-text-primary">캘린더 데이터 삭제</h4>
+                                <p className="text-sm text-hud-text-muted mt-1">
+                                    모든 일정, 이벤트, 반복 설정 등 캘린더 관련 데이터가 영구적으로 삭제됩니다.
+                                </p>
+                            </div>
+                        </div>
+                        <Button
+                            variant="danger"
+                            size="sm"
+                            onClick={handleDeleteCalendar}
+                            disabled={isDeletingCalendar}
+                            className="flex items-center gap-2"
+                        >
+                            {isDeletingCalendar ? (
+                                <>
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                    삭제 중...
+                                </>
+                            ) : (
+                                <>
+                                    <Trash2 className="w-4 h-4" />
+                                    캘린더 삭제
+                                </>
+                            )}
+                        </Button>
+                    </div>
+
+                    {/* 삭제 결과 메시지 */}
+                    {deleteResult?.type === 'calendar' && (
+                        <div className={`p-4 rounded-xl ${deleteResult.success
+                            ? 'bg-hud-accent-success/10 border border-hud-accent-success/30'
+                            : 'bg-hud-accent-danger/10 border border-hud-accent-danger/30'
+                            }`}>
+                            <p className={`text-sm ${deleteResult.success ? 'text-hud-accent-success' : 'text-hud-accent-danger'}`}>
+                                {deleteResult.success
+                                    ? '캘린더 데이터가 삭제되었습니다.'
+                                    : '캘린더 데이터 삭제에 실패했습니다. 다시 시도해 주세요.'}
+                            </p>
+                        </div>
+                    )}
+                </div>
+            </HudCard>
+
+            {/* 추가 정보 */}
+            <HudCard className="bg-hud-bg-secondary/50">
+                <div className="flex items-start gap-3">
+                    <AlertTriangle className="w-5 h-5 text-hud-text-muted flex-shrink-0 mt-0.5" />
+                    <div className="text-sm text-hud-text-muted">
+                        <p className="font-medium text-hud-text-primary mb-1">참고사항</p>
+                        <ul className="list-disc list-inside space-y-1">
+                            <li>삭제된 데이터는 백업되지 않으므로 복구할 수 없습니다.</li>
+                            <li>프로필 삭제 후에는 동일 이메일로 재가입이 제한될 수 있습니다.</li>
+                            <li>캘린더 삭제만 진행하면 프로필 정보는 유지됩니다.</li>
+                        </ul>
+                    </div>
+                </div>
+            </HudCard>
+        </div>
+    );
+};
 
 const Settings = () => {
     const [activeSection, setActiveSection] = useState('profile')
@@ -101,50 +638,7 @@ const Settings = () => {
                 {/* Content */}
                 <div className="flex-1 space-y-6">
                     {activeSection === 'profile' && (
-                        <HudCard title="프로필 설정" subtitle="개인 정보를 수정하세요">
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                <div>
-                                    <label className="block text-sm text-hud-text-secondary mb-2">First Name</label>
-                                    <input
-                                        type="text"
-                                        defaultValue="Admin"
-                                        className="w-full px-4 py-2.5 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-hud-text-primary focus:outline-none focus:border-hud-accent-primary transition-hud"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-sm text-hud-text-secondary mb-2">Last Name</label>
-                                    <input
-                                        type="text"
-                                        defaultValue="User"
-                                        className="w-full px-4 py-2.5 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-hud-text-primary focus:outline-none focus:border-hud-accent-primary transition-hud"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-sm text-hud-text-secondary mb-2">Email</label>
-                                    <input
-                                        type="email"
-                                        defaultValue="admin@hudadmin.com"
-                                        className="w-full px-4 py-2.5 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-hud-text-primary focus:outline-none focus:border-hud-accent-primary transition-hud"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-sm text-hud-text-secondary mb-2">Phone</label>
-                                    <input
-                                        type="tel"
-                                        defaultValue="+1 (555) 123-4567"
-                                        className="w-full px-4 py-2.5 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-hud-text-primary focus:outline-none focus:border-hud-accent-primary transition-hud"
-                                    />
-                                </div>
-                                <div className="md:col-span-2">
-                                    <label className="block text-sm text-hud-text-secondary mb-2">Bio</label>
-                                    <textarea
-                                        rows={4}
-                                        defaultValue="Senior Full Stack Developer with 8+ years of experience."
-                                        className="w-full px-4 py-2.5 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-hud-text-primary focus:outline-none focus:border-hud-accent-primary transition-hud resize-none"
-                                    />
-                                </div>
-                            </div>
-                        </HudCard>
+                        <ProfileSection />
                     )}
 
                     {activeSection === 'notifications' && (
@@ -538,7 +1032,11 @@ const Settings = () => {
                         </HudCard>
                     )}
 
-                    {(activeSection !== 'profile' && activeSection !== 'notifications' && activeSection !== 'appearance' && activeSection !== 'security') && (
+                    {activeSection === 'data' && (
+                        <DataManagementSection />
+                    )}
+
+                    {(activeSection !== 'profile' && activeSection !== 'notifications' && activeSection !== 'appearance' && activeSection !== 'security' && activeSection !== 'data') && (
                         <HudCard title={settingsSections.find(s => s.id === activeSection)?.label} subtitle="Settings coming soon">
                             <div className="py-12 text-center">
                                 <p className="text-hud-text-muted">This section is under development.</p>

@@ -1,21 +1,24 @@
 // ============================================
-// 부동산 분석 대시보드
-// 전체 현황 요약 및 통계
+// 부동산 분석 대시보드 (재작성)
+// 매물관리.md 요구사항 기반 구현
 // ============================================
 
 import { useEffect, useState } from 'react';
 import {
     Building2,
-    TrendingUp,
-    Activity,
-    MapPin,
     Home,
-    Store,
-    Factory,
-    ArrowUpRight,
-    ArrowDownRight,
+    Briefcase,
+    Calendar as CalendarIcon,
+    Clock,
+    MapPin,
+    TrendingUp,
     Loader2,
     RefreshCw,
+    FileText,
+    CheckCircle,
+    ArrowRight,
+    AlertCircle,
+    Sparkles,
 } from 'lucide-react';
 import HudCard from '../../components/common/HudCard';
 import StatCard from '../../components/common/StatCard';
@@ -23,64 +26,321 @@ import Button from '../../components/common/Button';
 import PriceTrendChart from '../../components/real-estate/PriceTrendChart';
 
 import { API_BASE } from '../../lib/api';
+import { getHolidayName } from '../../lib/korean-holidays';
 
-interface StatData {
+// ============================================
+// 타입 정의
+// ============================================
+
+interface DashboardSummary {
     totalProperties: number;
-    totalComplexes: number;
-    avgPrice: number;
-    priceChange: number;
+    favoriteCount: number;
+    managedCount: number;
 }
 
-interface RegionStatistics {
-    cortarNo: string;
-    cortarName: string;
-    count: number;
-    avgPrice: number;
-    minPrice: number;
-    maxPrice: number;
+interface RecentProperty {
+    articleNo: string;
+    articleName: string;
+    realEstateTypeName: string;
+    tradeTypeName: string;
+    dealOrWarrantPrc: number | null;
+    rentPrc: number | null;
+    area1: number | null;
+    createdAt: string;
 }
 
-interface PropertyTypeCount {
-    realEstateType: string;
-    count: number;
-    avgPrice: number;
+interface RecentFavorite {
+    id: string;
+    articleName: string;
+    propertyType: string | null;
+    tradeType: string | null;
+    price: number | null;
+    area: number | null;
+    createdAt: string;
 }
 
-interface UserSummary {
-    savedCount: number;
-    activeAlertCount: number;
-    conditionCount: number;
+interface RecentManaged {
+    id: string;
+    articleName: string;
+    propertyType: string | null;
+    contractType: string;
+    totalPrice: number | null;
+    depositAmount: number | null;
+    monthlyRent: number | null;
+    createdAt: string;
 }
 
-const propertyTypeNames: Record<string, string> = {
-    APT: '아파트',
-    OPST: '오피스텔',
-    VL: '빌라/연립',
-    DDDGG: '단독/다가구',
-    JWJT: '전원주택',
-    SGJT: '상가주택',
-    ONEROOM: '원룸',
-    TWOROOM: '투룸',
-    SG: '상가',
-    SMS: '사무실',
-    GJCG: '공장/창고',
-    TJ: '토지',
+interface RecentContract {
+    id: string;
+    articleName: string;
+    contractType: string;
+    totalPrice: number | null;
+    depositAmount: number | null;
+    monthlyRent: number | null;
+    contractDate: string;
+    contractEndDate: string;
+}
+
+interface Schedule {
+    id: string;
+    title: string;
+    description: string | null;
+    startTime: string;
+    endTime: string | null;
+    type: string;
+    location: string | null;
+    isAllDay: boolean;
+}
+
+// ============================================
+// 유틸리티 함수
+// ============================================
+
+const formatPrice = (price: number | null | undefined): string => {
+    if (price == null) return '-';
+    const ok = Math.floor(price / 10000);
+    const man = Math.floor((price % 10000) / 100);
+
+    const parts: string[] = [];
+    if (ok > 0) parts.push(`${ok}억`);
+    if (man > 0) parts.push(`${man}만`);
+
+    return parts.join(' ') || '0';
 };
 
-const propertyTypeIcons: Record<string, React.ReactNode> = {
-    APT: <Building2 size={20} />,
-    OPST: <Building2 size={20} />,
-    VL: <Home size={20} />,
-    ONEROOM: <Home size={20} />,
-    SG: <Store size={20} />,
-    default: <Building2 size={20} />,
+const formatDate = (dateString: string): string => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffTime = now.getTime() - date.getTime();
+    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+
+    if (diffDays === 0) return '오늘';
+    if (diffDays === 1) return '어제';
+    if (diffDays < 7) return `${diffDays}일 전`;
+
+    return date.toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' });
 };
+
+const formatTime = (dateString: string): string => {
+    const date = new Date(dateString);
+    return date.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
+};
+
+const formatDateTime = (dateString: string): string => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffTime = now.getTime() - date.getTime();
+    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+
+    if (diffDays === 0) return formatTime(dateString);
+    if (diffDays < 7) return `${diffDays}일 전`;
+
+    return date.toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' });
+};
+
+const getTradeTypeBadgeColor = (tradeType: string): string => {
+    switch (tradeType) {
+        case '매매':
+            return 'bg-red-500/15 text-red-400';
+        case '전세':
+            return 'bg-emerald-500/15 text-emerald-400';
+        case '월세':
+            return 'bg-amber-500/15 text-amber-400';
+        default:
+            return 'bg-hud-bg-tertiary text-hud-text-muted';
+    }
+};
+
+const getScheduleTypeColor = (type: string): string => {
+    switch (type) {
+        case 'meeting':
+            return 'bg-hud-accent-primary/10 border-hud-accent-primary text-hud-accent-primary';
+        case 'task':
+            return 'bg-hud-accent-warning/10 border-hud-accent-warning text-hud-accent-warning';
+        case 'event':
+            return 'bg-hud-accent-info/10 border-hud-accent-info text-hud-accent-info';
+        case 'break':
+            return 'bg-hud-accent-success/10 border-hud-accent-success text-hud-accent-success';
+        default:
+            return 'bg-hud-bg-hover border-hud-border-secondary text-hud-text-muted';
+    }
+};
+
+// ============================================
+// 공통 컴포넌트
+// ============================================
+
+interface RecentListCardProps {
+    title: string;
+    subtitle: string;
+    items: Array<{
+        id: string;
+        name: string;
+        type?: string;
+        tradeType?: string;
+        price?: number | null;
+        deposit?: number | null;
+        monthlyRent?: number | null;
+        area?: number | null;
+        date?: string;
+        contractDate?: string;
+        contractEndDate?: string;
+    }>;
+    emptyMessage: string;
+    onItemClick?: (id: string) => void;
+    showDate?: boolean;
+}
+
+const RecentListCard = ({ title, subtitle, items, emptyMessage, onItemClick, showDate = true }: RecentListCardProps) => {
+    return (
+        <HudCard title={title} subtitle={subtitle} noPadding>
+            <div className="divide-y divide-hud-border-secondary max-h-80 overflow-y-auto">
+                {items.length > 0 ? (
+                    items.map((item) => (
+                        <div
+                            key={item.id}
+                            className="p-4 hover:bg-hud-bg-hover transition-hud cursor-pointer"
+                            onClick={() => onItemClick?.(item.id)}
+                        >
+                            <div className="flex items-start justify-between gap-3">
+                                <div className="flex-1 min-w-0">
+                                    <p className="text-sm font-medium text-hud-text-primary truncate">{item.name}</p>
+                                    <div className="flex items-center gap-2 mt-1">
+                                        {item.type && (
+                                            <span className="text-xs text-hud-text-muted">{item.type}</span>
+                                        )}
+                                        {item.tradeType && (
+                                            <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${getTradeTypeBadgeColor(item.tradeType)}`}>
+                                                {item.tradeType}
+                                            </span>
+                                        )}
+                                        {item.area && (
+                                            <span className="text-xs text-hud-text-muted">{item.area}㎡</span>
+                                        )}
+                                    </div>
+                                    <div className="flex items-center gap-2 mt-1">
+                                        {(item.price || item.deposit) && (
+                                            <span className="text-sm font-mono text-hud-accent-primary">
+                                                {formatPrice(item.price || item.deposit)}
+                                            </span>
+                                        )}
+                                        {item.monthlyRent && item.monthlyRent > 0 && (
+                                            <span className="text-sm font-mono text-hud-text-secondary">
+                                                / {formatPrice(item.monthlyRent)}
+                                            </span>
+                                        )}
+                                    </div>
+                                    {showDate && (item.date || item.contractDate) && (
+                                        <div className="flex items-center gap-1 mt-1 text-xs text-hud-text-muted">
+                                            <Clock size={12} />
+                                            <span>{item.date ? formatDate(item.date) : formatDate(item.contractDate!)}</span>
+                                        </div>
+                                    )}
+                                </div>
+                                <ArrowRight size={16} className="text-hud-text-muted flex-shrink-0" />
+                            </div>
+                        </div>
+                    ))
+                ) : (
+                    <div className="p-8 text-center text-hud-text-muted">
+                        {emptyMessage}
+                    </div>
+                )}
+            </div>
+        </HudCard>
+    );
+};
+
+interface TodayScheduleCardProps {
+    schedules: Schedule[];
+    onAdd?: () => void;
+}
+
+const TodayScheduleCard = ({ schedules, onAdd }: TodayScheduleCardProps) => {
+    // 오늘이 공휴일인지 확인
+    const todayHoliday = getHolidayName(new Date());
+
+    return (
+        <HudCard
+            title="오늘의 일정"
+            subtitle={new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })}
+            action={
+                onAdd && (
+                    <Button variant="ghost" size="sm" leftIcon={<CalendarIcon size={14} />}>
+                        일정 추가
+                    </Button>
+                )
+            }
+            noPadding
+        >
+            {/* Holiday Banner */}
+            {todayHoliday && (
+                <div className="m-4 p-3 bg-hud-accent-danger/10 border border-hud-accent-danger/30 rounded-lg flex items-center gap-3">
+                    <Sparkles size={18} className="text-hud-accent-danger flex-shrink-0" />
+                    <div>
+                        <p className="text-sm font-medium text-hud-accent-danger">{todayHoliday}</p>
+                        <p className="text-xs text-hud-text-muted">오늘은 공휴일입니다</p>
+                    </div>
+                </div>
+            )}
+
+            <div className="divide-y divide-hud-border-secondary">
+                {schedules.length > 0 ? (
+                    schedules.map((schedule) => (
+                        <div key={schedule.id} className="p-4 hover:bg-hud-bg-hover transition-hud cursor-pointer">
+                            <div className="flex gap-3">
+                                <div className={`w-1 rounded-full ${schedule.type === 'meeting' ? 'bg-hud-accent-primary' :
+                                    schedule.type === 'task' ? 'bg-hud-accent-warning' :
+                                        schedule.type === 'event' ? 'bg-hud-accent-info' :
+                                            schedule.type === 'break' ? 'bg-hud-accent-success' :
+                                                'bg-hud-text-muted'
+                                    }`} />
+                                <div className="flex-1">
+                                    <h4 className="text-sm font-medium text-hud-text-primary">{schedule.title}</h4>
+                                    <div className="flex items-center gap-3 mt-1">
+                                        <div className="flex items-center gap-1 text-xs text-hud-text-muted">
+                                            <Clock size={12} />
+                                            <span>
+                                                {schedule.isAllDay ? '하루 종일' : formatTime(schedule.startTime)}
+                                                {schedule.endTime && !schedule.isAllDay && ` ~ ${formatTime(schedule.endTime)}`}
+                                            </span>
+                                        </div>
+                                        {schedule.location && (
+                                            <div className="flex items-center gap-1 text-xs text-hud-text-muted">
+                                                <MapPin size={12} />
+                                                <span>{schedule.location}</span>
+                                            </div>
+                                        )}
+                                    </div>
+                                    {schedule.description && (
+                                        <p className="text-xs text-hud-text-muted mt-1 line-clamp-1">{schedule.description}</p>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    ))
+                ) : (
+                    <div className="p-8 text-center text-hud-text-muted">
+                        <CalendarIcon size={32} className="mx-auto mb-2 opacity-50" />
+                        <p>오늘 예정된 일정이 없습니다</p>
+                    </div>
+                )}
+            </div>
+        </HudCard>
+    );
+};
+
+// ============================================
+// 메인 컴포넌트
+// ============================================
 
 const Dashboard = () => {
-    const [stats, setStats] = useState<StatData | null>(null);
-    const [regionStats, setRegionStats] = useState<RegionStatistics[]>([]);
-    const [typeStats, setTypeStats] = useState<PropertyTypeCount[]>([]);
-    const [userSummary, setUserSummary] = useState<UserSummary | null>(null);
+    const [summary, setSummary] = useState<DashboardSummary | null>(null);
+    const [recentProperties, setRecentProperties] = useState<RecentProperty[]>([]);
+    const [recentFavorites, setRecentFavorites] = useState<RecentFavorite[]>([]);
+    const [recentManaged, setRecentManaged] = useState<RecentManaged[]>([]);
+    const [recentContracts, setRecentContracts] = useState<RecentContract[]>([]);
+    const [todaySchedules, setTodaySchedules] = useState<Schedule[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -92,34 +352,52 @@ const Dashboard = () => {
         }
 
         try {
-            // 전체 통계 조회
-            const statsRes = await fetch(`${API_BASE}/api/statistics/overview`);
-            if (statsRes.ok) {
-                const statsData = await statsRes.json();
-                setStats(statsData);
+            const headers = { 'x-user-id': 'temp-user' };
+
+            const [
+                summaryRes,
+                propertiesRes,
+                favoritesRes,
+                managedRes,
+                contractsRes,
+                schedulesRes,
+            ] = await Promise.all([
+                fetch(`${API_BASE}/api/dashboard/summary`),
+                fetch(`${API_BASE}/api/dashboard/recent-properties?days=10`),
+                fetch(`${API_BASE}/api/dashboard/recent-favorites?days=10`, { headers }),
+                fetch(`${API_BASE}/api/dashboard/recent-managed?days=10`, { headers }),
+                fetch(`${API_BASE}/api/dashboard/recent-contracts?days=30`, { headers }),
+                fetch(`${API_BASE}/api/schedules/today`, { headers }),
+            ]);
+
+            if (summaryRes.ok) {
+                const data = await summaryRes.json();
+                setSummary(data);
             }
 
-            // 지역별 통계 (상위 10개)
-            const regionRes = await fetch(`${API_BASE}/api/statistics/regions?limit=10`);
-            if (regionRes.ok) {
-                const regionData = await regionRes.json();
-                setRegionStats(regionData.statistics || []);
+            if (propertiesRes.ok) {
+                const data = await propertiesRes.json();
+                setRecentProperties(data.properties || []);
             }
 
-            // 매물타입별 통계
-            const typeRes = await fetch(`${API_BASE}/api/statistics/types`);
-            if (typeRes.ok) {
-                const typeData = await typeRes.json();
-                setTypeStats(typeData.statistics || []);
+            if (favoritesRes.ok) {
+                const data = await favoritesRes.json();
+                setRecentFavorites(data.favorites || []);
             }
 
-            // 사용자 요약 정보
-            const userRes = await fetch(`${API_BASE}/api/user/summary`, {
-                headers: { 'x-user-id': 'temp-user' },
-            });
-            if (userRes.ok) {
-                const userData = await userRes.json();
-                setUserSummary(userData);
+            if (managedRes.ok) {
+                const data = await managedRes.json();
+                setRecentManaged(data.managed || []);
+            }
+
+            if (contractsRes.ok) {
+                const data = await contractsRes.json();
+                setRecentContracts(data.contracts || []);
+            }
+
+            if (schedulesRes.ok) {
+                const data = await schedulesRes.json();
+                setTodaySchedules(data.schedules || []);
             }
         } catch (error) {
             console.error('Failed to fetch dashboard data:', error);
@@ -132,17 +410,6 @@ const Dashboard = () => {
     useEffect(() => {
         fetchDashboardData();
     }, []);
-
-    const formatPrice = (price: number): string => {
-        const ok = Math.floor(price / 100000000);
-        const man = Math.floor((price % 100000000) / 10000);
-
-        const parts: string[] = [];
-        if (ok > 0) parts.push(`${ok}억`);
-        if (man > 0) parts.push(`${man.toLocaleString()}만`);
-
-        return parts.join(' ') || '0';
-    };
 
     if (isLoading) {
         return (
@@ -160,12 +427,13 @@ const Dashboard = () => {
             {/* Page Header */}
             <div className="flex items-center justify-between">
                 <div>
-                    <h1 className="text-2xl font-bold text-hud-text-primary">부동산 분석 대시보드</h1>
-                    <p className="text-hud-text-muted mt-1">전국 부동산 매물 현황 및 통계</p>
+                    <h1 className="text-2xl font-bold text-hud-text-primary">부동산 대시보드</h1>
+                    <p className="text-hud-text-muted mt-1">매물 현황 및 최신 정보 요약</p>
                 </div>
                 <Button
                     variant="primary"
                     glow
+                    size="sm"
                     leftIcon={<RefreshCw size={18} className={isRefreshing ? 'animate-spin' : ''} />}
                     onClick={() => fetchDashboardData(true)}
                     disabled={isRefreshing}
@@ -174,278 +442,130 @@ const Dashboard = () => {
                 </Button>
             </div>
 
-            {/* Stats Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            {/* Stats Row */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <StatCard
-                    title="전체 매물"
-                    value={stats?.totalProperties?.toLocaleString() || '0'}
-                    change={5.2}
+                    title="총 매물수"
+                    value={summary?.totalProperties?.toLocaleString() || '0'}
                     icon={<Building2 size={24} />}
                     variant="primary"
                 />
                 <StatCard
-                    title="단지 수"
-                    value={stats?.totalComplexes?.toLocaleString() || '0'}
-                    change={3.1}
-                    icon={<MapPin size={24} />}
+                    title="관심 매물"
+                    value={summary?.favoriteCount?.toLocaleString() || '0'}
+                    icon={<Home size={24} />}
                     variant="secondary"
                 />
                 <StatCard
-                    title="평균 매매가"
-                    value={stats ? formatPrice(stats.avgPrice) : '0'}
-                    change={stats?.priceChange || 0}
-                    icon={<TrendingUp size={24} />}
+                    title="관리 매물"
+                    value={summary?.managedCount?.toLocaleString() || '0'}
+                    icon={<Briefcase size={24} />}
                     variant="warning"
                 />
-                <StatCard
-                    title="누적 조회"
-                    value="12.5K"
-                    change={8.7}
-                    icon={<Activity size={24} />}
-                    variant="info"
+            </div>
+
+            {/* Recent Lists Row - 1 */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <RecentListCard
+                    title="최근 등록 매물"
+                    subtitle="최근 10일 동안 등록된 매물"
+                    items={recentProperties.map(p => ({
+                        id: p.articleNo,
+                        name: p.articleName,
+                        type: p.realEstateTypeName,
+                        tradeType: p.tradeTypeName,
+                        price: p.dealOrWarrantPrc,
+                        monthlyRent: p.rentPrc,
+                        area: p.area1,
+                        date: p.createdAt,
+                    }))}
+                    emptyMessage="최근 등록된 매물이 없습니다"
+                />
+                <RecentListCard
+                    title="최근 관심 매물"
+                    subtitle="최근 10일 동안 등록된 관심 매물"
+                    items={recentFavorites.map(f => ({
+                        id: f.id,
+                        name: f.articleName,
+                        type: f.propertyType || undefined,
+                        tradeType: f.tradeType || undefined,
+                        price: f.price,
+                        area: f.area,
+                        date: f.createdAt,
+                    }))}
+                    emptyMessage="최근 등록된 관심 매물이 없습니다"
                 />
             </div>
 
-            {/* Charts Row */}
+            {/* Today's Schedule Row */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* 매물타입별 분포 */}
-                <HudCard
-                    title="매물유형별 분포"
-                    subtitle="유형별 매물 수 및 평균가"
-                    className="lg:col-span-2"
-                >
-                    <div className="space-y-4">
-                        {typeStats.length > 0 ? (
-                            typeStats.map((type) => {
-                                const maxCount = Math.max(...typeStats.map(t => t.count));
-                                const percentage = (type.count / maxCount) * 100;
-
-                                return (
-                                    <div key={type.realEstateType}>
-                                        <div className="flex items-center justify-between mb-2">
-                                            <div className="flex items-center gap-2">
-                                                {propertyTypeIcons[type.realEstateType] || propertyTypeIcons.default}
-                                                <span className="text-sm font-medium text-hud-text-primary">
-                                                    {propertyTypeNames[type.realEstateType] || type.realEstateType}
-                                                </span>
-                                            </div>
-                                            <div className="flex items-center gap-4">
-                                                <span className="text-sm text-hud-text-muted">
-                                                    {type.count.toLocaleString()}개
-                                                </span>
-                                                <span className="text-sm font-mono text-hud-accent-primary">
-                                                    {formatPrice(type.avgPrice)}
-                                                </span>
-                                            </div>
-                                        </div>
-                                        <div className="h-3 bg-hud-bg-primary rounded-full overflow-hidden">
-                                            <div
-                                                className="h-full bg-gradient-to-r from-hud-accent-primary to-hud-accent-secondary rounded-full transition-all duration-500"
-                                                style={{ width: `${percentage}%` }}
-                                            />
-                                        </div>
-                                    </div>
-                                );
-                            })
-                        ) : (
-                            <div className="text-center py-8 text-hud-text-muted">
-                                데이터가 없습니다
-                            </div>
-                        )}
-                    </div>
-                </HudCard>
-
-                {/* 거래방식별 비율 */}
-                <HudCard title="거래방식별 비율" subtitle="매매/전세/월세">
-                    <div className="space-y-6">
-                        {[
-                            { label: '매매', value: 42, color: 'bg-hud-accent-primary' },
-                            { label: '전세', value: 35, color: 'bg-hud-accent-info' },
-                            { label: '월세', value: 23, color: 'bg-hud-accent-warning' },
-                        ].map((item) => (
-                            <div key={item.label}>
-                                <div className="flex justify-between text-sm mb-2">
-                                    <span className="text-hud-text-secondary">{item.label}</span>
-                                    <span className="text-hud-text-primary font-medium">{item.value}%</span>
-                                </div>
-                                <div className="h-2 bg-hud-bg-primary rounded-full overflow-hidden">
-                                    <div
-                                        className={`h-full ${item.color} rounded-full transition-all duration-500`}
-                                        style={{ width: `${item.value}%` }}
-                                    />
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </HudCard>
-            </div>
-
-            {/* Tables Row */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* 지역별 통계 */}
-                <HudCard
-                    title="지역별 평균가"
-                    subtitle="평균 매매가 기준 상위 지역"
-                    noPadding
-                    action={
-                        <Button variant="ghost" size="sm" rightIcon={<ArrowUpRight size={14} />}>
-                            더보기
-                        </Button>
-                    }
-                >
-                    <div className="overflow-x-auto">
-                        <table className="w-full">
-                            <thead>
-                                <tr className="border-b border-hud-border-secondary">
-                                    <th className="text-left px-5 py-3 text-xs font-medium text-hud-text-muted uppercase tracking-wider">
-                                        지역명
-                                    </th>
-                                    <th className="text-right px-5 py-3 text-xs font-medium text-hud-text-muted uppercase tracking-wider">
-                                        매물 수
-                                    </th>
-                                    <th className="text-right px-5 py-3 text-xs font-medium text-hud-text-muted uppercase tracking-wider">
-                                        평균가
-                                    </th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {regionStats.length > 0 ? (
-                                    regionStats.map((region) => (
-                                        <tr
-                                            key={region.cortarNo}
-                                            className="border-b border-hud-border-secondary last:border-0 hover:bg-hud-bg-hover transition-hud"
-                                        >
-                                            <td className="px-5 py-3">
-                                                <div className="flex items-center gap-2">
-                                                    <MapPin size={14} className="text-hud-accent-primary" />
-                                                    <span className="text-sm text-hud-text-primary">{region.cortarName}</span>
-                                                </div>
-                                            </td>
-                                            <td className="px-5 py-3 text-right">
-                                                <span className="text-sm font-mono text-hud-text-secondary">
-                                                    {region.count.toLocaleString()}개
-                                                </span>
-                                            </td>
-                                            <td className="px-5 py-3 text-right">
-                                                <span className="text-sm font-mono text-hud-accent-primary">
-                                                    {formatPrice(region.avgPrice)}
-                                                </span>
-                                            </td>
-                                        </tr>
-                                    ))
-                                ) : (
-                                    <tr>
-                                        <td colSpan={3} className="px-5 py-8 text-center text-hud-text-muted">
-                                            데이터가 없습니다
-                                        </td>
-                                    </tr>
-                                )}
-                            </tbody>
-                        </table>
-                    </div>
-                </HudCard>
-
-                {/* 최근 등록 매물 */}
-                <HudCard
-                    title="최근 등록 매물"
-                    subtitle="최근 등록된 매물 정보"
-                    noPadding
-                    action={
-                        <Button variant="ghost" size="sm" rightIcon={<ArrowUpRight size={14} />}>
-                            전체보기
-                        </Button>
-                    }
-                >
-                    <div className="overflow-x-auto">
-                        <table className="w-full">
-                            <thead>
-                                <tr className="border-b border-hud-border-secondary">
-                                    <th className="text-left px-5 py-3 text-xs font-medium text-hud-text-muted uppercase tracking-wider">
-                                        매물명
-                                    </th>
-                                    <th className="text-left px-5 py-3 text-xs font-medium text-hud-text-muted uppercase tracking-wider">
-                                        유형
-                                    </th>
-                                    <th className="text-right px-5 py-3 text-xs font-medium text-hud-text-muted uppercase tracking-wider">
-                                        가격
-                                    </th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {[
-                                    { name: '역삼힐스테이트', type: '아파트', price: '18억 5,000만', trend: 'up' },
-                                    { name: '강남역 더샵', type: '오피스텔', price: '12억 3,000만', trend: 'up' },
-                                    { name: '삼성동 빌라', type: '빌라', price: '8억 7,000만', trend: 'down' },
-                                    { name: '선릉역 원룸', type: '원룸', price: '5억 2,000만', trend: 'same' },
-                                    { name: '대치동 상가', type: '상가', price: '25억', trend: 'up' },
-                                ].map((item, i) => (
-                                    <tr
-                                        key={i}
-                                        className="border-b border-hud-border-secondary last:border-0 hover:bg-hud-bg-hover transition-hud"
-                                    >
-                                        <td className="px-5 py-3">
-                                            <span className="text-sm text-hud-text-primary">{item.name}</span>
-                                        </td>
-                                        <td className="px-5 py-3">
-                                            <span className="inline-flex px-2 py-0.5 rounded text-xs font-medium bg-hud-accent-info/10 text-hud-accent-info">
-                                                {item.type}
-                                            </span>
-                                        </td>
-                                        <td className="px-5 py-3 text-right">
-                                            <div className="flex items-center justify-end gap-2">
-                                                <span className="text-sm font-mono text-hud-text-primary">{item.price}</span>
-                                                {item.trend === 'up' && <ArrowUpRight size={14} className="text-hud-accent-success" />}
-                                                {item.trend === 'down' && <ArrowDownRight size={14} className="text-hud-accent-danger" />}
-                                            </div>
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                </HudCard>
-            </div>
-
-            {/* User Summary */}
-            <HudCard title="내 정보" subtitle="저장한 매물 및 알림">
-                <div className="grid grid-cols-3 gap-4">
-                    <div className="p-4 bg-hud-bg-primary rounded-lg text-center">
-                        <p className="text-2xl font-bold text-hud-accent-primary">{userSummary?.savedCount || 0}</p>
-                        <p className="text-xs text-hud-text-muted mt-1">저장한 매물</p>
-                    </div>
-                    <div className="p-4 bg-hud-bg-primary rounded-lg text-center">
-                        <p className="text-2xl font-bold text-hud-accent-warning">{userSummary?.activeAlertCount || 0}</p>
-                        <p className="text-xs text-hud-text-muted mt-1">활성 알림</p>
-                    </div>
-                    <div className="p-4 bg-hud-bg-primary rounded-lg text-center">
-                        <p className="text-2xl font-bold text-hud-accent-info">{userSummary?.conditionCount || 0}</p>
-                        <p className="text-xs text-hud-text-muted mt-1">저장한 조건</p>
-                    </div>
+                <div className="lg:col-span-1">
+                    <TodayScheduleCard
+                        schedules={todaySchedules}
+                    />
                 </div>
-            </HudCard>
+                <div className="lg:col-span-2">
+                    <PriceTrendChart title="최근 거래 금액 추이" period="6month" />
+                </div>
+            </div>
 
-            {/* Price Trend Chart */}
-            <PriceTrendChart title="전국 평균 가격 추이" period="6month" />
+            {/* Recent Lists Row - 2 */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <RecentListCard
+                    title="최근 관리 매물"
+                    subtitle="최근 10일 동안 등록된 관리 매물"
+                    items={recentManaged.map(m => ({
+                        id: m.id,
+                        name: m.articleName,
+                        type: m.propertyType || undefined,
+                        tradeType: m.contractType,
+                        price: m.totalPrice,
+                        deposit: m.depositAmount,
+                        monthlyRent: m.monthlyRent,
+                        date: m.createdAt,
+                    }))}
+                    emptyMessage="최근 등록된 관리 매물이 없습니다"
+                />
+                <RecentListCard
+                    title="최근 계약 매물"
+                    subtitle="최근 30일 동안 계약된 매물"
+                    items={recentContracts.map(c => ({
+                        id: c.id,
+                        name: c.articleName,
+                        tradeType: c.contractType,
+                        price: c.totalPrice,
+                        deposit: c.depositAmount,
+                        monthlyRent: c.monthlyRent,
+                        contractDate: c.contractDate,
+                    }))}
+                    emptyMessage="최근 계약된 매물이 없습니다"
+                    showDate={true}
+                />
+            </div>
 
-            {/* System Status */}
-            <HudCard title="시스템 상태" subtitle="API 및 데이터베이스 상태">
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                    {[
-                        { label: 'API 서버', status: '정상', color: 'text-hud-accent-success' },
-                        { label: '데이터베이스', status: '정상', color: 'text-hud-accent-success' },
-                        { label: '토큰 관리', status: '정상', color: 'text-hud-accent-success' },
-                        { label: '크롤러', status: '대기중', color: 'text-hud-accent-warning' },
-                    ].map((item) => (
-                        <div key={item.label} className="p-4 bg-hud-bg-primary rounded-lg">
-                            <div className="flex items-center justify-between">
-                                <span className="text-sm text-hud-text-secondary">{item.label}</span>
-                                <span className={`text-sm font-medium ${item.color}`}>{item.status}</span>
-                            </div>
-                            <div className="mt-2 h-1.5 bg-hud-bg-hover rounded-full overflow-hidden">
-                                <div className={`h-full ${item.color.replace('text', 'bg')} rounded-full`} style={{ width: '100%' }} />
-                            </div>
-                        </div>
-                    ))}
+            {/* Quick Links */}
+            <HudCard title="빠른 링크" subtitle="자주 사용하는 기능으로 바로 이동">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <button className="p-4 bg-hud-bg-primary rounded-lg hover:bg-hud-bg-hover transition-hud text-left">
+                        <Building2 className="w-6 h-6 text-hud-accent-primary mb-2" />
+                        <p className="text-sm font-medium text-hud-text-primary">매물 등록</p>
+                        <p className="text-xs text-hud-text-muted">새 매물 추가</p>
+                    </button>
+                    <button className="p-4 bg-hud-bg-primary rounded-lg hover:bg-hud-bg-hover transition-hud text-left">
+                        <Home className="w-6 h-6 text-hud-accent-secondary mb-2" />
+                        <p className="text-sm font-medium text-hud-text-primary">관심 매물</p>
+                        <p className="text-xs text-hud-text-muted">찜한 매물 관리</p>
+                    </button>
+                    <button className="p-4 bg-hud-bg-primary rounded-lg hover:bg-hud-bg-hover transition-hud text-left">
+                        <Briefcase className="w-6 h-6 text-hud-accent-warning mb-2" />
+                        <p className="text-sm font-medium text-hud-text-primary">관리 매물</p>
+                        <p className="text-xs text-hud-text-muted">계약 관리</p>
+                    </button>
+                    <button className="p-4 bg-hud-bg-primary rounded-lg hover:bg-hud-bg-hover transition-hud text-left">
+                        <CalendarIcon className="w-6 h-6 text-hud-accent-info mb-2" />
+                        <p className="text-sm font-medium text-hud-text-primary">일정 관리</p>
+                        <p className="text-xs text-hud-text-muted">캘린더 보기</p>
+                    </button>
                 </div>
             </HudCard>
         </div>

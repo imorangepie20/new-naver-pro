@@ -38,7 +38,7 @@ const menuSections: MenuSection[] = [
         emoji: '⚡',
         items: [
             { title: 'Dashboard', icon: <LayoutDashboard size={20} />, path: '/', color: 'cyan' },
-            { title: 'Analytics', icon: <BarChart3 size={20} />, path: '/analytics', color: 'amber' },
+            /*{ title: 'Analytics', icon: <BarChart3 size={20} />, path: '/analytics', color: 'amber' },*/
         ],
     },
     {
@@ -71,8 +71,9 @@ const menuSections: MenuSection[] = [
         label: '설정',
         emoji: '⚙️',
         items: [
-            { title: 'Profile', icon: <User size={20} />, path: '/profile', color: 'pink' },
-            { title: 'Calendar', icon: <Calendar size={20} />, path: '/calendar', color: 'orange' },
+            /*{ title: 'Profile', icon: <User size={20} />, path: '/profile', color: 'pink' },
+            */{ title: 'Calendar', icon: <Calendar size={20} />, path: '/calendar', color: 'orange' },
+
             { title: 'Settings', icon: <Settings size={20} />, path: '/settings', color: 'rose' },
         ],
     },

@@ -1,6 +1,6 @@
 # 세션 컨텍스트 기록
 
-> 최종 업데이트: 2026-03-04 (관리매물 UI 개선 완료)
+> 최종 업데이트: 2026-03-04 (스마트 파싱 기능 추가 완료)
 
 ---
 
@@ -230,6 +230,39 @@ npm start          # 단일 서버 실행 (http://localhost:3001)
   업로드 매물 목록 → ✏️ 버튼 → 모달 → PUT /api/properties/:id
   ```
 
+### 8. ✅ 매물목록/관심매물/관리매물 상세보기 기능 (2026-03-04 완료)
+- **대상 페이지**:
+  - `src/pages/real-estate/UploadedPropertyList.tsx`
+  - `src/pages/real-estate/FavoritePropertyList.tsx`
+  - `src/pages/real-estate/ManagedPropertyList.tsx`
+- **기능**:
+  - 🔍 Eye 아이콘 버튼으로 상세보기 모달 오픈
+  - 기본 정보 전체 표시 (매물명, 건물명, 주소, 유형, 가격, 면적, 층)
+  - 수정 버튼 클릭 시 수정 모달로 연결
+
+### 9. ✅ 테이블 UI 통일 및 반응형 개선 (2026-03-04 완료)
+- **대상 페이지**: 매물목록, 관심매물, 관리매물
+- **반응형 UI 구조**:
+  - 데스크톱 (≥640px): 테이블 뷰
+  - 모바일 (<640px): 카드 뷰
+- **통일된 UI 요소**:
+  - 테이블 헤더 스타일 통일
+  - 거래유형 배지 색상 통일 (매매: 빨강, 전세: 초록, 월세: 노랑)
+  - 관리 버튼 순서: 상세보기(🔍) → 수정(✏️) → 삭제(🗑️)
+- **파일**: `src/pages/real-estate/UploadedPropertyList.tsx`
+- **기능**:
+  - ❤️ 관심매물 등록 버튼 (즉시 등록)
+  - 📋 관리매물 등록 버튼 (모달 오픈)
+  - ✏️ 매물 수정 버튼 (원본 Property 수정)
+  - 계약 만료일 자동 계산 (매매: 3개월, 전세/월세: 2년)
+  - 담당자 정보 자동 포함
+- **데이터 흐름**:
+  ```
+  업로드 매물 목록 → ❤️ 버튼 → FavoriteProperty 테이블
+  업로드 매물 목록 → 📋 버튼 → 모달 → ManagedProperty 테이블
+  업로드 매물 목록 → ✏️ 버튼 → 모달 → PUT /api/properties/:id
+  ```
+
 ---
 
 ## 진행 중인 작업 (⏳)
@@ -281,3 +314,125 @@ npm start          # 단일 서버 실행 (http://localhost:3001)
   - 반응형 UI 구현 (데스크톱: 테이블, 모바일: 카드)
   - 건물명, 메모 필드 삭제 (화면 표시)
   - 상태 필터 삭제 (전체/활성/만료/갱신)
+- **2026-03-04**: 상세보기 기능 추가 완료
+  - 매물목록/관심매물/관리매물에 🔍 상세보기 버튼 추가
+  - 상세보기 모달 UI 구현
+- **2026-03-04**: 테이블 UI 통일 및 반응형 개선 완료
+  - 세 페이지 반응형 UI 통일 (데스크톱: 테이블, 모바일: 카드)
+  - 거래유형 배지 색상 통일
+- **2026-03-04**: 매물 목록 테이블 스타일 통일 완료
+  - 업로드 매물 목록(UploadedPropertyList.tsx) 테이블 스타일 수정
+  - CSS 변수 `--hud-border-table` 제거, `border-hud-border-secondary`로 통일
+  - 헤더 배경: `bg-hud-bg-tertiary`로 통일
+  - 바디 배경: `bg-hud-bg-secondary`로 통일
+  - 행 보더: `border-hud-border-primary/50`로 통일
+  - 관심매물/관리매물 목록과 동일한 스타일 적용
+- **2026-03-04**: 매물 목록 컬럼 구조 통일 완료 (최종)
+  - 관심매물(FavoritePropertyList.tsx) 컬럼 구조: 매물명, 매물유형, 거래, 가격, 월세, 면적, 층, 책임자명, 전화번호, 관리
+  - 관리매물(ManagedPropertyList.tsx) 컬럼 구조: 매물명, 매물유형, 거래, 가격, 월세, 면적, 층, 책임자명, 전화번호, 관리
+  - 업로드 매물목록과 동일한 컬럼 구조 적용 (데이터 없는 필드는 '-'로 표시)
+- **2026-03-04**: 단지 다중 선택 후 임시 매물 페이지에서 보기 기능 구현 완료
+  - RealEstate.tsx: 단지 카드에 체크박스 추가, 전체 선택 기능, 선택한 단지 매물 보기 버튼
+  - ApartmentTempPropertyList.tsx: 여러 단지의 매물을 병렬로 조회하는 기능 추가
+  - 다중 단지 모드일 때 테이블에 단지명 컬럼 추가
+  - 선택한 단지들을 URL 파라미터로 전달 (complexNos, complexNames)
+- **2026-03-04**: 스마트 파싱 기능 추가 완료
+  - **문제**: CSV 파싱 시 매물명이 잘림 ("201동 광교더샵" → "201동")
+  - **해결**: papaparse 라이브러리 도입으로 안정적 CSV 파싱 구현
+  - **PDF 지원**: pdfjs-dist로 PDF 텍스트 추출 기능 추가
+  - **로컬 AI**: Transformers.js 기반 로컬 LLM 파싱 (`src/lib/local-llm.ts`)
+    - 오프라인 작동, API 키 불필요
+    - CSV/Excel/PDF 다양한 형식 지원
+  - **스마트 파싱 UI**: ON/OFF 토글, 로컬 AI/Claude API/OpenAI API 선택 옵션
+  - **지원 형식**: TXT, CSV, Excel, PDF
+  - **파일**:
+    - `src/lib/local-llm.ts` - 로컬 LLM 파싱 라이브러리
+    - `src/lib/llm.ts` - Claude API 파싱 라이브러리
+    - `src/pages/real-estate/PropertyRegister.tsx` - 스마트 파싱 UI
+- **2026-03-04**: 정규 매물 목록 전체 삭제 프로그래스 바 구현
+  - **문제**: 전체 삭제 시 진행 상태를 알 수 없어 사용자 경험 불편
+  - **해결**: 배치 처리(10개씩 병렬) + 실시간 진행률 모달
+  - **파일**: `src/pages/real-estate/ApartmentRegularPropertyList.tsx`
+    - 상태: `isDeletingAll`, `deleteProgress` 추가
+    - UI: 백드롭 오버레이 + 프로그래스 바 + 퍼센트 표시
+- **2026-03-04**: 설정 페이지 데이터 관리 섹션 추가
+  - **기능**: 프로필 삭제, 캘린더 데이터 삭제
+  - **파일**: `src/pages/Settings.tsx`
+    - `DataManagementSection` 컴포넌트 추가
+    - 프로필 삭제: 계정 정보 영구 삭제, 삭제 후 로그아웃
+    - 캘린더 삭제: 모든 일정/이벤트 데이터 영구 삭제
+    - 경고 안내, 확인 다이얼로그, 삭제 진행 상태 표시
+
+---
+
+## 새로 추가된 라이브러리
+| 라이브러리 | 버전 | 용도 |
+|----------|------|------|
+| papaparse | 최신 | 안정적 CSV 파싱 (따옴표, 콤마 처리) |
+| @xenova/transformers | 최신 | 브라우저 내장 LLM (로컬 AI) |
+| pdfjs-dist | 최신 | PDF 텍스트 추출 |
+
+---
+
+## 스마트 파싱 사용법
+1. 파일 업로드 (CSV/Excel/PDF/TXT)
+2. "스마트 파싱 ON" 클릭
+3. "로컬 AI (무료)" 선택
+4. 파싱 버튼 클릭
+5. 매물 정보 자동 추출 및 확인
+6. 선택 후 저장
+
+**특징**:
+- 로컬 AI: 오프라인, 빠름, 무료
+- Claude/OpenAI API: 더 정확한 추론 (API 키 필요)
+
+---
+
+## 최종 분석 일지 (계속)
+- **2026-03-04**: 대시보드 재작성 완료
+  - **요구사항**: 매물관리.md에 명시된 대시보드 기능 구현
+  - **구현 내용**:
+    - StatCard 3개: 총 매물수, 총 관심 매물수, 총 관리 매물수
+    - 최근 10일 등록 매물 목록 표시
+    - 최근 10일 등록 관심 매물 목록 표시
+    - 최근 10일 등록 관리 매물 목록 표시
+    - 최근 30일 계약 매물 목록 표시
+    - 오늘의 일정 표시 (TodayScheduleCard 컴포넌트)
+    - 빠른 링크 섹션 추가
+  - **API 엔드포인트 추가**:
+    - `GET /api/dashboard/summary` - 대시보드 요약
+    - `GET /api/dashboard/recent-properties` - 최근 매물
+    - `GET /api/dashboard/recent-favorites` - 최근 관심매물
+    - `GET /api/dashboard/recent-managed` - 최근 관리매물
+    - `GET /api/dashboard/recent-contracts` - 최근 계약매물
+  - **파일**: `src/pages/dashboard/Dashboard.tsx`, `src/server/index.ts`
+
+- **2026-03-04**: 일정(Schedule) 기능 추가 완료
+  - **DB 모델**: Schedule 모델 추가 (prisma/schema.prisma)
+    - id, userId, title, description, startTime, endTime, type, location, isAllDay, reminderMinutes
+  - **API 엔드포인트 추가**:
+    - `GET /api/schedules` - 일정 목록 조회 (startDate, endDate 필터)
+    - `GET /api/schedules/today` - 오늘의 일정 조회
+    - `POST /api/schedules` - 일정 생성
+    - `PUT /api/schedules/:id` - 일정 수정
+    - `DELETE /api/schedules/:id` - 일정 삭제
+  - **캘린더 페이지 개선**:
+    - date-fns 라이브러리 활용 동적 달력 생성
+    - 날짜 클릭 시 해당 날짜 일정 표시
+    - 일정 생성/수정/삭제 모달
+    - 일정 유형별 색상 구분 (meeting, task, event, break, default)
+  - **파일**: `src/pages/Calendar.tsx`, `prisma/schema.prisma`, `src/server/index.ts`
+
+- **2026-03-04**: 스마트 고급 캘린더 구현 완료
+  - **다중 뷰 전환**: 월간/주간/일간/리스트 뷰
+  - **AI 스마트 일정 분류**: 제목/설명 자동 분석으로 유형과 우선순위 추천
+  - **일정 충돌 감지**: 시간이 겹치는 일정 자동 감지 및 경고
+  - **반복 일정**: 매일/매주/매월/매년 반복 설정 지원
+  - **드래그 & 드롭**: 일정 드래그로 날짜 변경
+  - **키보드 단축키**: N(새 일정), T(오늘), M/W/D/L(뷰 전환), ←→(이전/다음)
+  - **DB 스키마 확장**:
+    - isRecurring, recurrenceRule, recurrenceEnd (반복 일정)
+    - color, priority, attendees, status (추가 정보)
+  - **빠른 통계 카드**: 이번 달/오늘/반복/회의 일정 수 표시
+  - **파일**: `src/pages/Calendar.tsx`, `prisma/schema.prisma`
+  - **라이브러리 추가**: framer-motion, react-hotkeys-hook

@@ -196,9 +196,10 @@ const TempPropertyList = () => {
   };
 
   // 포맷 함수
-  const formatPrice = (price: string) => {
+  const formatPrice = (price: string | number) => {
     if (!price) return '-';
-    const num = parseInt(price.replace(/,/g, ''));
+    const priceStr = String(price);
+    const num = parseInt(priceStr.replace(/,/g, ''));
     if (num >= 10000) {
       return `${(num / 10000).toFixed(0)}억 ${num % 10000 > 0 ? (num % 10000).toLocaleString() + '만' : ''}`;
     }

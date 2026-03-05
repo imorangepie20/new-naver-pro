@@ -14,7 +14,7 @@ const app = new Hono();
 app.use('/*', cors({
   origin: (origin) => {
     // origin이 없는 요청(동일 출처, 직접 IP 접속 등)은 허용
-    if (!origin) return true;
+    if (!origin) return '*';
 
     const allowedOrigins = [
       'http://localhost:5173',
@@ -731,15 +731,15 @@ app.get('/api/articles', async (c) => {
             realEstateTypeName: article.realEstateTypeName,
             tradeTypeCode: article.tradeTypeCode,
             tradeTypeName: article.tradeTypeName,
-            dealOrWarrantPrc: parseInt(article.dealOrWarrantPrc.replace(/,/g, '')) || null,
-            rentPrc: article.rentPrc ? parseInt(article.rentPrc) : null,
+            dealOrWarrantPrc: typeof article.dealOrWarrantPrc === 'string' ? parseInt(article.dealOrWarrantPrc.replace(/,/g, '')) || null : article.dealOrWarrantPrc || null,
+            rentPrc: article.rentPrc ? (typeof article.rentPrc === 'string' ? parseInt(article.rentPrc) : article.rentPrc) : null,
             area1: article.area1,
             area2: article.area2,
             floorInfo: article.floorInfo,
             direction: article.direction || null,
             buildingName: article.buildingName || null,
-            latitude: parseFloat(article.latitude),
-            longitude: parseFloat(article.longitude),
+            latitude: typeof article.latitude === 'string' ? parseFloat(article.latitude) : article.latitude,
+            longitude: typeof article.longitude === 'string' ? parseFloat(article.longitude) : article.longitude,
             cortarNo: article.cortarNo || cortarNo,
             detailAddress: article.detailAddress,
             articleConfirmYmd: article.articleConfirmYmd,
@@ -758,15 +758,15 @@ app.get('/api/articles', async (c) => {
             realEstateTypeName: article.realEstateTypeName,
             tradeTypeCode: article.tradeTypeCode,
             tradeTypeName: article.tradeTypeName,
-            dealOrWarrantPrc: parseInt(article.dealOrWarrantPrc.replace(/,/g, '')) || null,
-            rentPrc: article.rentPrc ? parseInt(article.rentPrc) : null,
+            dealOrWarrantPrc: typeof article.dealOrWarrantPrc === 'string' ? parseInt(article.dealOrWarrantPrc.replace(/,/g, '')) || null : article.dealOrWarrantPrc || null,
+            rentPrc: article.rentPrc ? (typeof article.rentPrc === 'string' ? parseInt(article.rentPrc) : article.rentPrc) : null,
             area1: article.area1,
             area2: article.area2,
             floorInfo: article.floorInfo,
             direction: article.direction || null,
             buildingName: article.buildingName || null,
-            latitude: parseFloat(article.latitude),
-            longitude: parseFloat(article.longitude),
+            latitude: typeof article.latitude === 'string' ? parseFloat(article.latitude) : article.latitude,
+            longitude: typeof article.longitude === 'string' ? parseFloat(article.longitude) : article.longitude,
             cortarNo: article.cortarNo || cortarNo,
             detailAddress: article.detailAddress,
             articleConfirmYmd: article.articleConfirmYmd,
@@ -914,10 +914,10 @@ app.get('/api/complexes', async (c) => {
           if (articlesResp.articleList && articlesResp.articleList.length > 0) {
             const firstArticle = articlesResp.articleList[0];
             enrichedPrices[cx.markerId] = {
-              price: firstArticle.dealOrWarrantPrc,
+              price: String(firstArticle.dealOrWarrantPrc || ''),
               tradeType: firstArticle.tradeTypeName,
               tradeTypeCode: firstArticle.tradeTypeCode,
-              rentPrc: firstArticle.rentPrc,
+              rentPrc: firstArticle.rentPrc ? String(firstArticle.rentPrc) : undefined,
               area: firstArticle.area2 || firstArticle.area1,
             };
             console.log(`[Price] ${cx.complexName}: ${firstArticle.tradeTypeName} ${firstArticle.dealOrWarrantPrc}`);
@@ -1033,8 +1033,8 @@ app.get('/api/articles/:articleNo/refresh', async (c) => {
       data: {
         articleName: updatedArticle.articleName,
         articleStatus: updatedArticle.articleStatus,
-        dealOrWarrantPrc: parseInt(updatedArticle.dealOrWarrantPrc.replace(/,/g, '')) || null,
-        rentPrc: updatedArticle.rentPrc ? parseInt(updatedArticle.rentPrc) : null,
+        dealOrWarrantPrc: typeof updatedArticle.dealOrWarrantPrc === 'string' ? parseInt(updatedArticle.dealOrWarrantPrc.replace(/,/g, '')) || null : updatedArticle.dealOrWarrantPrc || null,
+        rentPrc: updatedArticle.rentPrc ? (typeof updatedArticle.rentPrc === 'string' ? parseInt(updatedArticle.rentPrc) : updatedArticle.rentPrc) : null,
         floorInfo: updatedArticle.floorInfo,
         direction: updatedArticle.direction || null,
         articleConfirmYmd: updatedArticle.articleConfirmYmd,
@@ -1734,6 +1734,116 @@ app.get('/api/user/summary', async (c) => {
   }
 });
 
+/**
+ * GET /api/user/profile
+ * 사용자 프로필 조회
+ */
+app.get('/api/user/profile', async (c) => {
+  try {
+    const userId = c.req.header('x-user-id') || 'temp-user';
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        phone: true,
+        zipCode: true,
+        address: true,
+        detailAddress: true,
+        companyName: true,
+        businessNumber: true,
+      },
+    });
+
+    if (!user) {
+      return c.json({ error: 'User not found' }, 404);
+    }
+
+    return c.json(user);
+  } catch (error) {
+    console.error('Profile fetch error:', error);
+    return c.json(
+      {
+        error: error instanceof Error ? error.message : 'Failed to fetch profile',
+      },
+      500
+    );
+  }
+});
+
+/**
+ * PUT /api/user/profile
+ * 사용자 프로필 수정
+ */
+app.put('/api/user/profile', async (c) => {
+  try {
+    const userId = c.req.header('x-user-id') || 'temp-user';
+    const body = await c.req.json();
+    const { name, email, phone, zipCode, address, detailAddress, companyName, businessNumber } = body;
+
+    const updated = await prisma.user.update({
+      where: { id: userId },
+      data: {
+        name: name || undefined,
+        email: email || undefined,
+        phone: phone || undefined,
+        zipCode: zipCode || undefined,
+        address: address || undefined,
+        detailAddress: detailAddress || undefined,
+        companyName: companyName || undefined,
+        businessNumber: businessNumber || undefined,
+      },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        phone: true,
+        zipCode: true,
+        address: true,
+        detailAddress: true,
+        companyName: true,
+        businessNumber: true,
+      },
+    });
+
+    return c.json(updated);
+  } catch (error) {
+    console.error('Profile update error:', error);
+    return c.json(
+      {
+        error: error instanceof Error ? error.message : 'Failed to update profile',
+      },
+      500
+    );
+  }
+});
+
+/**
+ * DELETE /api/user/profile
+ * 사용자 프로필 삭제
+ */
+app.delete('/api/user/profile', async (c) => {
+  try {
+    const userId = c.req.header('x-user-id') || 'temp-user';
+
+    await prisma.user.delete({
+      where: { id: userId },
+    });
+
+    return c.json({ success: true });
+  } catch (error) {
+    console.error('Profile delete error:', error);
+    return c.json(
+      {
+        error: error instanceof Error ? error.message : 'Failed to delete profile',
+      },
+      500
+    );
+  }
+});
+
 // ============================================
 // 9. 인증 API (회원가입/로그인)
 // ============================================
@@ -2373,6 +2483,7 @@ app.post('/api/managed-properties', async (c) => {
         address: body.address || null,
         propertyId: body.propertyId || null,
         contractType: body.contractType,
+        propertyType: body.propertyType || null,
         downPayment: body.downPayment || null,
         downPaymentDate: body.downPaymentDate ? new Date(body.downPaymentDate) : null,
         interimPayment: body.interimPayment || null,
@@ -2411,7 +2522,7 @@ app.put('/api/managed-properties/:id', async (c) => {
 
     const updateData: any = {};
     const fields = [
-      'articleName', 'buildingName', 'address', 'contractType',
+      'articleName', 'buildingName', 'address', 'contractType', 'propertyType',
       'downPayment', 'interimPayment', 'finalPayment',
       'totalPrice', 'depositAmount', 'monthlyRent',
       'tenantName', 'tenantPhone', 'managerName', 'managerPhone',
@@ -2457,6 +2568,292 @@ app.delete('/api/managed-properties/:id', async (c) => {
   } catch (error) {
     console.error('Managed property delete error:', error);
     return c.json({ error: error instanceof Error ? error.message : 'Failed to delete' }, 500);
+  }
+});
+
+// ============================================
+// 대시보드 API
+// ============================================
+
+/**
+ * GET /api/dashboard/summary
+ * 대시보드 요약 (총 매물수, 관심매물수, 관리매물수)
+ */
+app.get('/api/dashboard/summary', async (c) => {
+  try {
+    const userId = c.req.header('x-user-id') || 'temp-user';
+
+    // 사용자 자동 생성
+    await prisma.user.upsert({
+      where: { id: userId },
+      update: {},
+      create: { id: userId, name: userId, provider: 'local' },
+    });
+
+    const [totalProperties, favoriteCount, managedCount] = await Promise.all([
+      prisma.property.count(),
+      prisma.favoriteProperty.count({ where: { userId } }),
+      prisma.managedProperty.count({ where: { userId } }),
+    ]);
+
+    return c.json({ totalProperties, favoriteCount, managedCount });
+  } catch (error) {
+    console.error('Dashboard summary error:', error);
+    return c.json({ error: error instanceof Error ? error.message : 'Failed to fetch summary' }, 500);
+  }
+});
+
+/**
+ * GET /api/dashboard/recent-properties
+ * 최근 N일 동안 등록한 매물 목록
+ */
+app.get('/api/dashboard/recent-properties', async (c) => {
+  try {
+    const days = parseInt(c.req.query('days') || '10');
+    const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+    const properties = await prisma.property.findMany({
+      where: { createdAt: { gte: startDate } },
+      orderBy: { createdAt: 'desc' },
+      take: 10,
+      select: {
+        articleNo: true,
+        articleName: true,
+        realEstateTypeName: true,
+        tradeTypeName: true,
+        dealOrWarrantPrc: true,
+        rentPrc: true,
+        area1: true,
+        createdAt: true,
+      },
+    });
+
+    return c.json({ properties });
+  } catch (error) {
+    console.error('Recent properties error:', error);
+    return c.json({ error: error instanceof Error ? error.message : 'Failed to fetch recent properties' }, 500);
+  }
+});
+
+/**
+ * GET /api/dashboard/recent-favorites
+ * 최근 N일 동안 등록한 관심 매물 목록
+ */
+app.get('/api/dashboard/recent-favorites', async (c) => {
+  try {
+    const userId = c.req.header('x-user-id') || 'temp-user';
+    const days = parseInt(c.req.query('days') || '10');
+    const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+    const favorites = await prisma.favoriteProperty.findMany({
+      where: { userId, createdAt: { gte: startDate } },
+      orderBy: { createdAt: 'desc' },
+      take: 10,
+    });
+
+    return c.json({ favorites });
+  } catch (error) {
+    console.error('Recent favorites error:', error);
+    return c.json({ error: error instanceof Error ? error.message : 'Failed to fetch recent favorites' }, 500);
+  }
+});
+
+/**
+ * GET /api/dashboard/recent-managed
+ * 최근 N일 동안 등록한 관리 매물 목록
+ */
+app.get('/api/dashboard/recent-managed', async (c) => {
+  try {
+    const userId = c.req.header('x-user-id') || 'temp-user';
+    const days = parseInt(c.req.query('days') || '10');
+    const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+    const managed = await prisma.managedProperty.findMany({
+      where: { userId, createdAt: { gte: startDate } },
+      orderBy: { createdAt: 'desc' },
+      take: 10,
+    });
+
+    return c.json({ managed });
+  } catch (error) {
+    console.error('Recent managed properties error:', error);
+    return c.json({ error: error instanceof Error ? error.message : 'Failed to fetch recent managed' }, 500);
+  }
+});
+
+/**
+ * GET /api/dashboard/recent-contracts
+ * 최근 N일 동안 계약한 계약 매물 목록
+ */
+app.get('/api/dashboard/recent-contracts', async (c) => {
+  try {
+    const userId = c.req.header('x-user-id') || 'temp-user';
+    const days = parseInt(c.req.query('days') || '30');
+    const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+    const contracts = await prisma.managedProperty.findMany({
+      where: { userId, contractDate: { gte: startDate } },
+      orderBy: { contractDate: 'desc' },
+      take: 10,
+    });
+
+    return c.json({ contracts });
+  } catch (error) {
+    console.error('Recent contracts error:', error);
+    return c.json({ error: error instanceof Error ? error.message : 'Failed to fetch recent contracts' }, 500);
+  }
+});
+
+// ============================================
+// 일정(Schedule) API
+// ============================================
+
+/**
+ * GET /api/schedules
+ * 일정 목록 조회
+ * Query: startDate, endDate (필터링)
+ */
+app.get('/api/schedules', async (c) => {
+  try {
+    const userId = c.req.header('x-user-id') || 'temp-user';
+    const startDate = c.req.query('startDate');
+    const endDate = c.req.query('endDate');
+
+    // 사용자 자동 생성
+    await prisma.user.upsert({
+      where: { id: userId },
+      update: {},
+      create: { id: userId, name: userId, provider: 'local' },
+    });
+
+    const whereClause: any = { userId };
+    if (startDate && endDate) {
+      whereClause.startTime = {
+        gte: new Date(startDate),
+        lte: new Date(endDate),
+      };
+    }
+
+    const schedules = await prisma.schedule.findMany({
+      where: whereClause,
+      orderBy: { startTime: 'asc' },
+    });
+
+    return c.json({ schedules });
+  } catch (error) {
+    console.error('Schedules fetch error:', error);
+    return c.json({ error: error instanceof Error ? error.message : 'Failed to fetch schedules' }, 500);
+  }
+});
+
+/**
+ * GET /api/schedules/today
+ * 오늘의 일정 조회
+ */
+app.get('/api/schedules/today', async (c) => {
+  try {
+    const userId = c.req.header('x-user-id') || 'temp-user';
+
+    // 사용자 자동 생성
+    await prisma.user.upsert({
+      where: { id: userId },
+      update: {},
+      create: { id: userId, name: userId, provider: 'local' },
+    });
+
+    const today = new Date();
+    const startOfDay = new Date(today);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(today);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const schedules = await prisma.schedule.findMany({
+      where: {
+        userId,
+        startTime: { gte: startOfDay, lte: endOfDay }
+      },
+      orderBy: { startTime: 'asc' },
+    });
+
+    return c.json({ schedules });
+  } catch (error) {
+    console.error('Today schedules error:', error);
+    return c.json({ error: error instanceof Error ? error.message : 'Failed to fetch today schedules' }, 500);
+  }
+});
+
+/**
+ * POST /api/schedules
+ * 일정 생성
+ */
+app.post('/api/schedules', async (c) => {
+  try {
+    const userId = c.req.header('x-user-id') || 'temp-user';
+    const body = await c.req.json();
+
+    const schedule = await prisma.schedule.create({
+      data: {
+        userId,
+        title: body.title,
+        description: body.description,
+        startTime: new Date(body.startTime),
+        endTime: body.endTime ? new Date(body.endTime) : null,
+        type: body.type || 'default',
+        location: body.location,
+        isAllDay: body.isAllDay || false,
+        reminderMinutes: body.reminderMinutes,
+      },
+    });
+
+    return c.json({ schedule });
+  } catch (error) {
+    console.error('Schedule create error:', error);
+    return c.json({ error: error instanceof Error ? error.message : 'Failed to create schedule' }, 500);
+  }
+});
+
+/**
+ * PUT /api/schedules/:id
+ * 일정 수정
+ */
+app.put('/api/schedules/:id', async (c) => {
+  try {
+    const id = c.req.param('id');
+    const body = await c.req.json();
+
+    const schedule = await prisma.schedule.update({
+      where: { id },
+      data: {
+        title: body.title,
+        description: body.description,
+        startTime: body.startTime ? new Date(body.startTime) : undefined,
+        endTime: body.endTime !== undefined ? (body.endTime ? new Date(body.endTime) : null) : undefined,
+        type: body.type,
+        location: body.location,
+        isAllDay: body.isAllDay,
+        reminderMinutes: body.reminderMinutes,
+      },
+    });
+
+    return c.json({ schedule });
+  } catch (error) {
+    console.error('Schedule update error:', error);
+    return c.json({ error: error instanceof Error ? error.message : 'Failed to update schedule' }, 500);
+  }
+});
+
+/**
+ * DELETE /api/schedules/:id
+ * 일정 삭제
+ */
+app.delete('/api/schedules/:id', async (c) => {
+  try {
+    const id = c.req.param('id');
+    await prisma.schedule.delete({ where: { id } });
+    return c.json({ success: true, message: 'Deleted' });
+  } catch (error) {
+    console.error('Schedule delete error:', error);
+    return c.json({ error: error instanceof Error ? error.message : 'Failed to delete schedule' }, 500);
   }
 });
 

@@ -93,7 +93,7 @@ const columns: Column[] = [
         <div>
           <p className="font-semibold text-hud-text-primary">{formatted}</p>
           {article.rentPrc && article.tradeTypeCode === 'B2' && (
-            <p className="text-xs text-hud-text-muted">{parseInt(article.rentPrc).toLocaleString()}만/월</p>
+            <p className="text-xs text-hud-text-muted">{parseInt(String(article.rentPrc)).toLocaleString()}만/월</p>
           )}
         </div>
       );

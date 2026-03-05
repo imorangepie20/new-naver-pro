@@ -22,6 +22,9 @@ import {
     TrendingUp,
     ArrowUpDown,
     Layers,
+    CheckSquare,
+    Square,
+    Eye,
 } from 'lucide-react';
 import RegionSelectorModal from '../../components/real-estate/RegionSelectorModal';
 import PropertyMapView from '../../components/real-estate/PropertyMapView';
@@ -156,6 +159,9 @@ const RealEstate = () => {
 
     // 저장한 매물
     const [savedArticles, setSavedArticles] = useState<Set<string>>(new Set());
+
+    // 선택한 단지들
+    const [selectedComplexes, setSelectedComplexes] = useState<Set<string>>(new Set());
 
     // 필터 토글 (모바일)
     const [showFilter, setShowFilter] = useState(false);
@@ -696,34 +702,118 @@ const RealEstate = () => {
                             {complexes.length > 0 && (
                                 <>
                                     <div className="flex items-center justify-between mb-5 pb-4 border-b border-hud-border-secondary">
-                                        <div className="flex items-center gap-2">
-                                            <span className="text-sm text-hud-text-muted">단지</span>
-                                            <span className="text-lg font-bold text-hud-accent-primary">{complexes.length}</span>
-                                            <span className="text-sm text-hud-text-muted">개</span>
+                                        <div className="flex items-center gap-3">
+                                            {/* 전체 선택 체크박스 */}
+                                            <button
+                                                onClick={() => {
+                                                    const allSelected = complexes.every(c => selectedComplexes.has(c.markerId));
+                                                    if (allSelected) {
+                                                        setSelectedComplexes(new Set());
+                                                    } else {
+                                                        setSelectedComplexes(new Set(complexes.map(c => c.markerId)));
+                                                    }
+                                                }}
+                                                className="p-1.5 hover:bg-hud-bg-hover rounded-md transition-colors"
+                                                title={complexes.every(c => selectedComplexes.has(c.markerId)) ? '전체 해제' : '전체 선택'}
+                                            >
+                                                {complexes.every(c => selectedComplexes.has(c.markerId)) && complexes.length > 0 ? (
+                                                    <CheckSquare className="w-5 h-5 text-hud-accent-primary" />
+                                                ) : (
+                                                    <Square className="w-5 h-5 text-hud-text-muted" />
+                                                )}
+                                            </button>
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-sm text-hud-text-muted">단지</span>
+                                                <span className="text-lg font-bold text-hud-accent-primary">{complexes.length}</span>
+                                                <span className="text-sm text-hud-text-muted">개</span>
+                                                {selectedComplexes.size > 0 && (
+                                                    <span className="text-sm text-hud-accent-primary">
+                                                        ({selectedComplexes.size}개 선택)
+                                                    </span>
+                                                )}
+                                            </div>
                                         </div>
-                                        <span className="text-xs text-hud-text-muted flex items-center gap-1">
-                                            <MapPin size={12} />
-                                            단지를 선택하면 매물을 볼 수 있습니다
-                                        </span>
+                                        <div className="flex items-center gap-2">
+                                            {selectedComplexes.size > 0 && (
+                                                <Button
+                                                    variant="primary"
+                                                    size="sm"
+                                                    leftIcon={<Eye size={16} />}
+                                                    onClick={() => {
+                                                        const selectedComplexData = complexes.filter(c => selectedComplexes.has(c.markerId));
+                                                        const complexNos = selectedComplexData.map(c => c.markerId).join(',');
+                                                        const complexNames = selectedComplexData.map(c => c.complexName).join(',');
+                                                        const queryParams = new URLSearchParams({
+                                                            complexNos,
+                                                            complexNames,
+                                                            realEstateType: selectedType,
+                                                        });
+                                                        navigate(`/real-estate/apartment-temp-properties?${queryParams.toString()}`);
+                                                    }}
+                                                    className="text-sm"
+                                                >
+                                                    선택한 단지 매물 보기
+                                                </Button>
+                                            )}
+                                            <span className="text-xs text-hud-text-muted flex items-center gap-1">
+                                                <MapPin size={12} />
+                                                단지를 선택하면 매물을 볼 수 있습니다
+                                            </span>
+                                        </div>
                                     </div>
 
                                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                                        {complexes.map((complex) => (
+                                        {complexes.map((complex) => {
+                                            const isSelected = selectedComplexes.has(complex.markerId);
+                                            return (
                                             <div
                                                 key={complex.markerId}
                                                 onClick={() => handleComplexClick(complex)}
-                                                className="group relative bg-hud-bg-primary border border-hud-border-secondary rounded-xl p-5 cursor-pointer
+                                                className={`group relative bg-hud-bg-primary border rounded-xl p-5 cursor-pointer
                                                     transition-all duration-300 ease-out
                                                     hover:border-hud-accent-primary/60
                                                     hover:shadow-lg hover:shadow-hud-accent-primary/10
                                                     hover:-translate-y-1
-                                                    active:scale-[0.98]"
+                                                    active:scale-[0.98]
+                                                    ${isSelected
+                                                        ? 'border-hud-accent-primary shadow-lg shadow-hud-accent-primary/20 ring-2 ring-hud-accent-primary/30'
+                                                        : 'border-hud-border-secondary'}`}
                                             >
                                                 {/* 호버 시 그림자 효과 */}
-                                                <div className="absolute inset-0 rounded-xl bg-gradient-to-br from-hud-accent-primary/0 to-hud-accent-primary/0 group-hover:from-hud-accent-primary/5 group-hover:to-hud-accent-primary/0 transition-all duration-300 pointer-events-none" />
+                                                <div className={`absolute inset-0 rounded-xl bg-gradient-to-br transition-all duration-300 pointer-events-none ${
+                                                    isSelected
+                                                        ? 'from-hud-accent-primary/10 to-hud-accent-primary/5'
+                                                        : 'from-hud-accent-primary/0 to-hud-accent-primary/0 group-hover:from-hud-accent-primary/5 group-hover:to-hud-accent-primary/0'
+                                                }`} />
 
-                                                {/* 상단: 단지명 + 총 매물 */}
-                                                <div className="flex justify-between items-start mb-3 relative">
+                                                {/* 체크박스 (좌측 상단) */}
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        const newSelected = new Set(selectedComplexes);
+                                                        if (newSelected.has(complex.markerId)) {
+                                                            newSelected.delete(complex.markerId);
+                                                        } else {
+                                                            newSelected.add(complex.markerId);
+                                                        }
+                                                        setSelectedComplexes(newSelected);
+                                                    }}
+                                                    className={`absolute top-3 left-3 z-10 p-2 rounded-lg transition-all duration-200 ${
+                                                        isSelected
+                                                            ? 'bg-hud-accent-primary text-white shadow-lg shadow-hud-accent-primary/30'
+                                                            : 'bg-hud-bg-secondary/90 hover:bg-hud-bg-secondary text-hud-text-muted border border-hud-border-secondary'
+                                                    }`}
+                                                    title={isSelected ? '선택 해제' : '선택'}
+                                                >
+                                                    {isSelected ? (
+                                                        <CheckSquare className="w-4 h-4" strokeWidth={3} />
+                                                    ) : (
+                                                        <Square className="w-4 h-4" strokeWidth={2} />
+                                                    )}
+                                                </button>
+
+                                                {/* 상단: 단지명 + 총 매물 (체크박스 공간 확보) */}
+                                                <div className="flex justify-between items-start mb-3 relative pl-10">
                                                     <div className="flex-1 min-w-0 pr-2">
                                                         <h3 className="text-base font-semibold text-hud-text-primary truncate group-hover:text-hud-accent-primary transition-colors">
                                                             {complex.complexName}
@@ -825,7 +915,8 @@ const RealEstate = () => {
                                                     </div>
                                                 </div>
                                             </div>
-                                        ))}
+                                            );
+                                        })}
                                     </div>
                                 </>
                             )}

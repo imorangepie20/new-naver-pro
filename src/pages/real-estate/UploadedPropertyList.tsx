@@ -21,6 +21,10 @@ import {
   ClipboardList,
   X,
   Pencil,
+  Eye,
+  DollarSign,
+  FileText,
+  User,
 } from 'lucide-react';
 import HudCard from '../../components/common/HudCard';
 import Button from '../../components/common/Button';
@@ -61,6 +65,7 @@ const UploadedPropertyList = () => {
     buildingName: '',
     address: '',
     contractType: '전세',
+    propertyType: '',
     downPayment: '',
     downPaymentDate: '',
     interimPayment: '',
@@ -82,6 +87,10 @@ const UploadedPropertyList = () => {
   // ========== 매물 수정 모달 상태 ==========
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingArticle, setEditingArticle] = useState<UploadedArticle | null>(null);
+
+  // ========== 매물 상세보기 모달 상태 ==========
+  const [showDetailModal, setShowDetailModal] = useState(false);
+  const [detailArticle, setDetailArticle] = useState<UploadedArticle | null>(null);
   const [editForm, setEditForm] = useState({
     articleName: '',
     buildingName: '',
@@ -542,6 +551,7 @@ const UploadedPropertyList = () => {
       buildingName: article.buildingName || article.complexName || '',
       address: article.detailAddress || '',
       contractType: article.tradeTypeName || '전세',
+      propertyType: article.realEstateTypeName || '',
       contractDate: today,
       contractEndDate: getContractEndDate(article.tradeTypeName || '전세'),
       totalPrice: article.tradeTypeName === '매매' ? String(article.dealOrWarrantPrc || '') : '',
@@ -575,6 +585,7 @@ const UploadedPropertyList = () => {
         buildingName: managedForm.buildingName || null,
         address: managedForm.address || null,
         contractType: managedForm.contractType,
+        propertyType: managedForm.propertyType || null,
         contractDate: managedForm.contractDate,
         contractEndDate: managedForm.contractEndDate,
         managerName: managedForm.managerName || null,
@@ -617,6 +628,12 @@ const UploadedPropertyList = () => {
       console.error('관리매물 등록 실패:', error);
       alert('관리매물 등록에 실패했습니다.');
     }
+  };
+
+  // ========== 매물 상세보기 ==========
+  const viewDetail = (article: UploadedArticle) => {
+    setDetailArticle(article);
+    setShowDetailModal(true);
   };
 
   // ========== 매물 수정 (원본 Property) ==========
@@ -921,7 +938,7 @@ const UploadedPropertyList = () => {
       </div>
 
       {/* 매물 유형 + 거래 유형 필터 */}
-      <div className="mb-5 p-4 bg-hud-bg-secondary border border-[var(--hud-border-table)] rounded-xl space-y-4">
+      <div className="mb-5 p-4 bg-hud-bg-secondary border border-hud-border-secondary rounded-xl space-y-4">
         {/* 매물 유형 */}
         <div className="flex items-center gap-3 flex-wrap">
           <span className="text-sm font-semibold text-hud-text-primary flex items-center gap-1.5">
@@ -933,7 +950,7 @@ const UploadedPropertyList = () => {
               onClick={() => setSelectedPropertyTypes(new Set())}
               className={`px-3 py-1 text-sm rounded-lg transition-all duration-200 ${selectedPropertyTypes.size === 0
                 ? 'bg-hud-accent-primary text-hud-bg-primary font-medium shadow-md shadow-hud-accent-primary/15'
-                : 'bg-hud-bg-primary text-hud-text-secondary hover:bg-hud-bg-hover border border-[var(--hud-border-table)]'
+                : 'bg-hud-bg-primary text-hud-text-secondary hover:bg-hud-bg-hover border border-hud-border-secondary'
                 }`}
             >
               전체
@@ -955,7 +972,7 @@ const UploadedPropertyList = () => {
                   }}
                   className={`px-3 py-1 text-sm rounded-lg transition-all duration-200 ${isSelected
                     ? 'bg-hud-accent-primary text-hud-bg-primary font-medium shadow-md shadow-hud-accent-primary/15'
-                    : 'bg-hud-bg-primary text-hud-text-secondary hover:bg-hud-bg-hover border border-[var(--hud-border-table)]'
+                    : 'bg-hud-bg-primary text-hud-text-secondary hover:bg-hud-bg-hover border border-hud-border-secondary'
                     }`}
                 >
                   {type.label}
@@ -986,7 +1003,7 @@ const UploadedPropertyList = () => {
                 }}
                 className={`px-3 py-1 text-sm rounded-lg transition-all duration-200 ${selectedTradeType === type.code
                   ? 'bg-hud-accent-primary text-hud-bg-primary font-medium shadow-md shadow-hud-accent-primary/15'
-                  : 'bg-hud-bg-primary text-hud-text-secondary hover:bg-hud-bg-hover border border-[var(--hud-border-table)]'
+                  : 'bg-hud-bg-primary text-hud-text-secondary hover:bg-hud-bg-hover border border-hud-border-secondary'
                   }`}
               >
                 {type.label}
@@ -1061,7 +1078,7 @@ const UploadedPropertyList = () => {
                 placeholder="건물명 검색..."
                 value={filterComplex}
                 onChange={(e) => setFilterComplex(e.target.value)}
-                className="w-full sm:w-48 pl-9 pr-4 py-2 bg-hud-bg-secondary border border-[var(--hud-border-table)] rounded-lg text-sm text-hud-text-primary placeholder:text-hud-text-muted focus:outline-none focus:border-hud-accent-primary focus:ring-1 focus:ring-hud-accent-primary/50 transition-all"
+                className="w-full sm:w-48 pl-9 pr-4 py-2 bg-hud-bg-secondary border border-hud-border-secondary rounded-lg text-sm text-hud-text-primary placeholder:text-hud-text-muted focus:outline-none focus:border-hud-accent-primary focus:ring-1 focus:ring-hud-accent-primary/50 transition-all"
               />
               <Filter size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-hud-text-muted" />
             </div>
@@ -1124,7 +1141,7 @@ const UploadedPropertyList = () => {
             <table className="w-full min-w-[700px]">
               {/* 테이블 헤더 */}
               <thead>
-                <tr className="bg-hud-bg-secondary border-b-2 border-[var(--hud-border-table)]">
+                <tr className="border-b-2 border-hud-border-primary bg-hud-bg-tertiary">
                   <th className="px-3 py-3.5 text-center w-10">
                     <button
                       onClick={toggleSelectAll}
@@ -1172,13 +1189,13 @@ const UploadedPropertyList = () => {
               </thead>
 
               {/* 테이블 바디 */}
-              <tbody className="max-h-[calc(100vh-300px)] overflow-y-auto">
+              <tbody className="bg-hud-bg-secondary">
                 {currentArticles.map((article, idx) => (
                   <tr
                     key={article.id}
-                    className={`border-b border-hud-text-muted/20 text-sm transition-all duration-150 ${selectedItems.has(article.id)
+                    className={`border-b border-hud-border-primary/50 text-sm transition-all duration-150 ${selectedItems.has(article.id)
                       ? 'bg-hud-accent-primary/15'
-                      : 'bg-hud-bg-primary hover:bg-hud-bg-hover/80'
+                      : 'hover:bg-hud-bg-hover'
                       }`}
                     style={{ animationDelay: `${idx * 20}ms` }}
                   >
@@ -1234,6 +1251,13 @@ const UploadedPropertyList = () => {
                     </td>
                     <td className="px-3 py-2 text-center">
                       <div className="flex items-center justify-center gap-1">
+                        <button
+                          onClick={() => viewDetail(article)}
+                          className="p-2 text-hud-text-muted hover:text-hud-accent-info hover:bg-hud-accent-info/10 rounded-lg transition-all"
+                          title="상세보기"
+                        >
+                          <Eye className="w-4 h-4" />
+                        </button>
                         <Button
                           variant="ghost"
                           size="sm"
@@ -1287,7 +1311,7 @@ const UploadedPropertyList = () => {
 
             {/* 페이징 */}
             {totalPages > 1 && (
-              <div className="flex items-center justify-between px-5 py-4 bg-hud-bg-secondary border-t border-[var(--hud-border-table)]">
+              <div className="flex items-center justify-between px-5 py-4 bg-hud-bg-secondary border-t border-hud-border-primary">
                 <div className="text-sm text-hud-text-muted">
                   <span className="font-medium text-hud-text-primary">{startIndex + 1}-{Math.min(endIndex, processedArticles.length)}</span>
                   <span className="mx-2">/</span>
@@ -1303,7 +1327,7 @@ const UploadedPropertyList = () => {
                     <ChevronLeft className="w-4 h-4 mr-1" />
                     이전
                   </Button>
-                  <div className="flex items-center gap-1 px-3 py-1 bg-hud-bg-primary rounded-lg border border-[var(--hud-border-table)]">
+                  <div className="flex items-center gap-1 px-3 py-1 bg-hud-bg-primary rounded-lg border border-hud-border-secondary">
                     <span className="text-sm font-medium text-hud-text-primary">{currentPage}</span>
                     <span className="text-sm text-hud-text-muted mx-1">/</span>
                     <span className="text-sm text-hud-text-muted">{totalPages}</span>
@@ -1321,6 +1345,220 @@ const UploadedPropertyList = () => {
               </div>
             )}
           </HudCard>
+        )}
+
+        {/* 모바일: 카드 뷰 */}
+        {isLoading ? (
+          <div className="flex items-center justify-center h-80">
+            <div className="flex flex-col items-center gap-4">
+              <div className="relative">
+                <Loader2 className="w-14 h-14 text-hud-accent-primary animate-spin" />
+                <div className="absolute inset-0 w-14 h-14 rounded-full border-4 border-hud-accent-primary/20" />
+              </div>
+              <div className="text-center">
+                <p className="text-base font-medium text-hud-text-primary">매물을 불러오는 중...</p>
+                <p className="text-sm text-hud-text-muted mt-1">잠시만 기다려주세요</p>
+              </div>
+            </div>
+          </div>
+        ) : error ? (
+          <div className="p-16 text-center">
+            <div className="p-4 bg-hud-accent-danger/10 rounded-2xl w-20 h-20 mx-auto mb-5 flex items-center justify-center">
+              <Home className="w-10 h-10 text-hud-accent-danger" />
+            </div>
+            <p className="text-lg font-semibold text-hud-accent-danger">{error}</p>
+            <Button
+              variant="primary"
+              className="mt-6"
+              onClick={loadUploadedArticles}
+            >
+              다시 시도
+            </Button>
+          </div>
+        ) : processedArticles.length === 0 ? (
+          <div className="p-16 text-center">
+            <div className="p-4 bg-hud-bg-secondary rounded-2xl w-20 h-20 mx-auto mb-5 flex items-center justify-center">
+              <Upload className="w-10 h-10 text-hud-text-muted" />
+            </div>
+            <p className="text-lg font-semibold text-hud-text-primary">업로드한 매물이 없습니다</p>
+            <p className="text-sm text-hud-text-muted mt-2 max-w-sm mx-auto">파일에서 매물을 업로드해주세요</p>
+            <Button
+              variant="primary"
+              className="mt-6"
+              onClick={() => navigate('/real-estate/register')}
+            >
+              매물 업로드하러 가기
+            </Button>
+          </div>
+        ) : (
+          <div className="sm:hidden space-y-3">
+            {currentArticles.map((article) => (
+              <div key={article.id} className="bg-hud-bg-secondary rounded-xl border border-hud-border-secondary overflow-hidden">
+                {/* 헤더: 매물명 + 거래유형 + 선택체크박스 */}
+                <div className="flex items-center gap-3 p-4 border-b border-hud-border-secondary/50">
+                  <button
+                    onClick={() => toggleSelectItem(article.id)}
+                    className="p-1.5 hover:bg-hud-bg-hover rounded-md transition-colors"
+                  >
+                    {selectedItems.has(article.id) ? (
+                      <CheckSquare className="w-4 h-4 text-hud-accent-primary" />
+                    ) : (
+                      <Square className="w-4 h-4 text-hud-text-muted" />
+                    )}
+                  </button>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="text-sm font-semibold text-hud-text-primary truncate">{article.articleName || '-'}</h3>
+                    {article.buildingName && <p className="text-xs text-hud-text-muted mt-0.5 truncate">{article.buildingName}</p>}
+                  </div>
+                  {article.tradeTypeName && (
+                    <span className={`shrink-0 inline-flex px-2 py-1 text-xs font-medium rounded-lg ${article.tradeTypeName === '매매' ? 'bg-red-500/15 text-red-400'
+                            : article.tradeTypeName === '전세' ? 'bg-emerald-500/15 text-emerald-400'
+                              : 'bg-amber-500/15 text-amber-400'
+                        }`}>{article.tradeTypeName}</span>
+                  )}
+                </div>
+
+                {/* 본문 */}
+                <div className="p-4 space-y-3">
+                  {/* 가격 정보 */}
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-hud-text-muted">매매/보증금</span>
+                    <span className="text-base font-bold text-hud-accent-primary">{formatPrice(article.dealOrWarrantPrc)}</span>
+                  </div>
+                  {article.rentPrc && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-hud-text-muted">월세</span>
+                      <span className="text-sm text-hud-text-secondary">{article.rentPrc}만</span>
+                    </div>
+                  )}
+
+                  {/* 상세 정보 */}
+                  <div className="grid grid-cols-2 gap-2 pt-2 border-t border-hud-border-secondary/30">
+                    <div className="text-center">
+                      <div className="text-xs text-hud-text-muted mb-1">유형</div>
+                      <div className="text-xs px-2 py-1 bg-hud-bg-primary rounded-md text-hud-text-secondary inline-block">
+                        {PROPERTY_TYPES.find((t) => t.code === article.realEstateTypeCode)?.label || article.realEstateTypeName || '-'}
+                      </div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-xs text-hud-text-muted mb-1">면적</div>
+                      <div className="text-sm text-hud-text-secondary">{article.area1 || '-'}㎡</div>
+                    </div>
+                  </div>
+
+                  {/* 층/방향 */}
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-hud-text-muted">층</span>
+                      <span className="text-sm text-hud-text-secondary">{parseFloor(article.floorInfo)}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-hud-text-muted">방향</span>
+                      <span className="text-sm text-hud-text-secondary">{article.direction || '-'}</span>
+                    </div>
+                  </div>
+
+                  {/* 담당자 정보 */}
+                  {article.managerName && (
+                    <div className="flex items-center justify-between pt-2 border-t border-hud-border-secondary/30">
+                      <span className="text-xs text-hud-text-muted">책임자</span>
+                      <span className="text-sm text-hud-text-secondary">{article.managerName}</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* 하단: 관리 버튼 */}
+                <div className="flex items-center justify-between px-4 py-3 bg-hud-bg-primary/30">
+                  <span className="text-xs text-hud-text-muted">
+                    {new Date(article.savedAt).toLocaleDateString('ko-KR')}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => viewDetail(article)}
+                      className="p-2 text-hud-text-muted hover:text-hud-accent-info hover:bg-hud-accent-info/10 rounded-lg transition-all"
+                      title="상세보기"
+                    >
+                      <Eye className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => toggleFavorite(article)}
+                      className={`p-2 rounded-lg transition-all ${
+                        favoriteArticleIds.has(article.id)
+                          ? 'text-pink-500 hover:text-pink-600'
+                          : 'text-hud-text-muted hover:text-pink-400'
+                      }`}
+                      title={favoriteArticleIds.has(article.id) ? '관심매물 삭제' : '관심매물 등록'}
+                    >
+                      <Heart className="w-4 h-4" fill={favoriteArticleIds.has(article.id) ? 'currentColor' : 'none'} />
+                    </button>
+                    <button
+                      onClick={() => addToManaged(article)}
+                      className={`p-2 rounded-lg transition-all ${
+                        managedArticleIds.has(article.id)
+                          ? 'text-emerald-500 hover:text-emerald-600'
+                          : 'text-hud-text-muted hover:text-emerald-400'
+                      }`}
+                      title="관리매물 등록"
+                    >
+                      <ClipboardList className="w-4 h-4" fill={managedArticleIds.has(article.id) ? 'currentColor' : 'none'} />
+                    </button>
+                    <button
+                      onClick={() => editItem(article)}
+                      className="p-2 text-hud-text-muted hover:text-amber-400 hover:bg-amber-500/10 rounded-lg transition-all"
+                      title="수정"
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => deleteItem(article.id)}
+                      className="p-2 text-hud-text-muted hover:text-hud-accent-danger hover:bg-hud-accent-danger/10"
+                      title="삭제"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ))}
+
+            {/* 모바일 페이징 */}
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between px-4 py-3 bg-hud-bg-secondary border-t border-hud-border-secondary rounded-xl">
+                <div className="text-sm text-hud-text-muted">
+                  <span className="font-medium text-hud-text-primary">{startIndex + 1}-{Math.min(endIndex, processedArticles.length)}</span>
+                  <span className="mx-2">/</span>
+                  <span>전체 {processedArticles.length}건</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                    disabled={currentPage === 1}
+                  >
+                    <ChevronLeft className="w-4 h-4 mr-1" />
+                    이전
+                  </Button>
+                  <div className="flex items-center gap-1 px-3 py-1 bg-hud-bg-primary rounded-lg">
+                    <span className="text-sm font-medium text-hud-text-primary">{currentPage}</span>
+                    <span className="text-sm text-hud-text-muted mx-1">/</span>
+                    <span className="text-sm text-hud-text-muted">{totalPages}</span>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={currentPage === totalPages}
+                  >
+                    다음
+                    <ChevronRight className="w-4 h-4 ml-1" />
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
         )}
       </HudCard>
 
@@ -1385,6 +1623,22 @@ const UploadedPropertyList = () => {
                       <option value="매매">매매</option>
                       <option value="전세">전세</option>
                       <option value="월세">월세</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-hud-text-muted mb-1">매물 유형</label>
+                    <select
+                      value={managedForm.propertyType}
+                      onChange={(e) => setManagedForm(prev => ({ ...prev, propertyType: e.target.value }))}
+                      className="w-full px-3 py-2 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-sm text-hud-text-primary focus:outline-none focus:ring-2 focus:ring-hud-accent-primary/30"
+                    >
+                      <option value="">선택안함</option>
+                      <option value="아파트">아파트</option>
+                      <option value="오피스텔">오피스텔</option>
+                      <option value="빌라">빌라</option>
+                      <option value="원룸">원룸</option>
+                      <option value="투룸">투룸</option>
+                      <option value="상가">상가</option>
                     </select>
                   </div>
                 </div>
@@ -1675,6 +1929,151 @@ const UploadedPropertyList = () => {
             <div className="flex justify-end gap-3 px-6 py-4 border-t border-hud-border-secondary">
               <Button variant="outline" onClick={() => setShowEditModal(false)}>취소</Button>
               <Button onClick={updateArticle} className="bg-amber-500 hover:bg-amber-600 text-white">수정</Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 매물 상세보기 모달 */}
+      {showDetailModal && detailArticle && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm p-4" onClick={() => setShowDetailModal(false)}>
+          <div className="bg-hud-bg-secondary rounded-2xl border border-hud-border-secondary shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-6 py-4 border-b border-hud-border-secondary sticky top-0 bg-hud-bg-secondary z-10">
+              <h2 className="text-lg font-bold text-hud-text-primary">매물 상세정보</h2>
+              <button onClick={() => setShowDetailModal(false)} className="p-2 hover:bg-hud-bg-hover rounded-lg transition-colors">
+                <X className="w-5 h-5 text-hud-text-muted" />
+              </button>
+            </div>
+            <div className="p-6 space-y-6">
+              {/* 기본 정보 */}
+              <div>
+                <h3 className="text-sm font-semibold text-hud-text-primary mb-4 flex items-center gap-2">
+                  <Home className="w-4 h-4 text-hud-accent-primary" />
+                  기본 정보
+                </h3>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="col-span-2">
+                    <span className="text-xs text-hud-text-muted">매물명</span>
+                    <p className="text-base font-medium text-hud-text-primary mt-1">{detailArticle.articleName || '-'}</p>
+                  </div>
+                  <div className="col-span-2">
+                    <span className="text-xs text-hud-text-muted">건물명/단지명</span>
+                    <p className="text-sm text-hud-text-secondary mt-1">{detailArticle.buildingName || detailArticle.complexName || '-'}</p>
+                  </div>
+                  <div>
+                    <span className="text-xs text-hud-text-muted">매물 유형</span>
+                    <p className="text-sm text-hud-text-secondary mt-1">
+                      {PROPERTY_TYPES.find((t) => t.code === detailArticle.realEstateTypeCode)?.label || detailArticle.realEstateTypeName || '-'}
+                    </p>
+                  </div>
+                  <div>
+                    <span className="text-xs text-hud-text-muted">거래 유형</span>
+                    <p className="text-sm text-hud-text-secondary mt-1">{detailArticle.tradeTypeName || '-'}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* 가격 정보 */}
+              <div>
+                <h3 className="text-sm font-semibold text-hud-text-primary mb-4 flex items-center gap-2">
+                  <DollarSign className="w-4 h-4 text-hud-accent-warning" />
+                  가격 정보
+                </h3>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <span className="text-xs text-hud-text-muted">매매/보증금</span>
+                    <p className="text-lg font-bold text-hud-accent-primary mt-1">{formatPrice(detailArticle.dealOrWarrantPrc)}</p>
+                  </div>
+                  <div>
+                    <span className="text-xs text-hud-text-muted">월세</span>
+                    <p className="text-lg font-bold text-hud-accent-primary mt-1">{detailArticle.rentPrc ? `${detailArticle.rentPrc}만` : '-'}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* 상세 정보 */}
+              <div>
+                <h3 className="text-sm font-semibold text-hud-text-primary mb-4 flex items-center gap-2">
+                  <FileText className="w-4 h-4 text-hud-accent-info" />
+                  상세 정보
+                </h3>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <span className="text-xs text-hud-text-muted">공급면적</span>
+                    <p className="text-sm text-hud-text-secondary mt-1">{detailArticle.area1 ? `${detailArticle.area1}㎡` : '-'}</p>
+                  </div>
+                  <div>
+                    <span className="text-xs text-hud-text-muted">전용면적</span>
+                    <p className="text-sm text-hud-text-secondary mt-1">{detailArticle.area2 ? `${detailArticle.area2}㎡` : '-'}</p>
+                  </div>
+                  <div>
+                    <span className="text-xs text-hud-text-muted">층</span>
+                    <p className="text-sm text-hud-text-secondary mt-1">{parseFloor(detailArticle.floorInfo)}</p>
+                  </div>
+                  <div>
+                    <span className="text-xs text-hud-text-muted">방향</span>
+                    <p className="text-sm text-hud-text-secondary mt-1">{detailArticle.direction || '-'}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* 주소 정보 */}
+              {detailArticle.detailAddress && (
+                <div>
+                  <h3 className="text-sm font-semibold text-hud-text-primary mb-4 flex items-center gap-2">
+                    <Building2 className="w-4 h-4 text-hud-accent-success" />
+                    주소 정보
+                  </h3>
+                  <p className="text-sm text-hud-text-secondary">{detailArticle.detailAddress}</p>
+                </div>
+              )}
+
+              {/* 담당자 정보 */}
+              {(detailArticle.managerName || detailArticle.managerPhone) && (
+                <div>
+                  <h3 className="text-sm font-semibold text-hud-text-primary mb-4 flex items-center gap-2">
+                    <User className="w-4 h-4 text-hud-accent-danger" />
+                    담당자 정보
+                  </h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <span className="text-xs text-hud-text-muted">책임자명</span>
+                      <p className="text-sm text-hud-text-secondary mt-1">{detailArticle.managerName || '-'}</p>
+                    </div>
+                    <div>
+                      <span className="text-xs text-hud-text-muted">연락처</span>
+                      <p className="text-sm text-hud-text-secondary mt-1">{detailArticle.managerPhone || '-'}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* 매물 특징 */}
+              {detailArticle.articleFeatureDesc && (
+                <div>
+                  <h3 className="text-sm font-semibold text-hud-text-primary mb-4 flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-hud-accent-primary" />
+                    매물 특징
+                  </h3>
+                  <p className="text-sm text-hud-text-secondary bg-hud-bg-primary p-3 rounded-lg">{detailArticle.articleFeatureDesc}</p>
+                </div>
+              )}
+            </div>
+            <div className="flex justify-end gap-3 px-6 py-4 border-t border-hud-border-secondary sticky bottom-0 bg-hud-bg-secondary">
+              <Button
+                variant="outline"
+                onClick={() => { setShowDetailModal(false); editItem(detailArticle); }}
+                className="flex items-center gap-2"
+              >
+                <Pencil className="w-4 h-4" />
+                수정
+              </Button>
+              <Button
+                onClick={() => setShowDetailModal(false)}
+                className="bg-hud-accent-primary hover:bg-hud-accent-primary/90 text-white"
+              >
+                닫기
+              </Button>
             </div>
           </div>
         </div>

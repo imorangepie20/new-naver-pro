@@ -6,6 +6,8 @@
 import { useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import * as XLSX from 'xlsx';
+import Papa from 'papaparse';
+import * as pdfjsLib from 'pdfjs-dist';
 import {
     Upload,
     FileText,
@@ -18,10 +20,14 @@ import {
     Plus,
     Eye,
     EyeOff,
+    Brain,
+    Sparkles,
 } from 'lucide-react';
 import HudCard from '../../components/common/HudCard';
 import Button from '../../components/common/Button';
 import { API_BASE } from '../../lib/api';
+import { parsePropertiesWithClaude, ParsedProperty as LLMParsedProperty } from '../../lib/llm';
+import { extractPropertiesFromText } from '../../lib/local-llm';
 
 // ============================================
 // 타입 정의
@@ -77,9 +83,14 @@ const PropertyRegister = () => {
     const [saveResult, setSaveResult] = useState<{ success: number; failed: number } | null>(null);
     const [showGuide, setShowGuide] = useState(false);
     const [isDragging, setIsDragging] = useState(false);
+    // LLM 관련 State
+    const [useLLM, setUseLLM] = useState(true);
+    const [llmApiKey, setLlmApiKey] = useState('');
+    const [llmProvider, setLlmProvider] = useState<'claude' | 'openai' | 'local'>('local');
+    const [showLLMSettings, setShowLLMSettings] = useState(false);
 
     // 핸들러
-    const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
         const selectedFile = e.target.files?.[0];
         if (!selectedFile) return;
 
@@ -90,6 +101,28 @@ const PropertyRegister = () => {
         setExcelData(null);
 
         const fileExt = selectedFile.name.split('.').pop()?.toLowerCase();
+
+        // PDF 파일 처리
+        if (fileExt === 'pdf') {
+            try {
+                const arrayBuffer = await selectedFile.arrayBuffer();
+                const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+                let fullText = '';
+
+                for (let i = 1; i <= pdf.numPages; i++) {
+                    const page = await pdf.getPage(i);
+                    const textContent = await page.getTextContent();
+                    const pageText = textContent.items.map((item: any) => item.str).join(' ');
+                    fullText += pageText + '\n';
+                }
+
+                setFileContent(fullText);
+            } catch (err) {
+                console.error('PDF 파싱 오류:', err);
+                alert('PDF 파일을 읽는 중 오류가 발생했습니다.');
+            }
+            return;
+        }
 
         // 엑셀 파일은 arrayBuffer로 읽기
         if (fileExt === 'xlsx' || fileExt === 'xls') {
@@ -334,7 +367,7 @@ const PropertyRegister = () => {
         };
     }, []);
 
-    // CSV 파싱 (따옴표 처리 개선)
+    // CSV 파싱 (Papaparse 사용 - 안정적 파싱)
     const parseCSVContent = useCallback((content: string): ParseResult => {
         const properties: ParsedProperty[] = [];
         const errors: string[] = [];
@@ -343,110 +376,77 @@ const PropertyRegister = () => {
             return { success: false, properties: [], errors: ['빈 파일입니다'], totalLines: 0, parsedLines: 0 };
         }
 
-        // CSV 파싱 함수 (따옴표 처리)
-        const parseCSVLine = (line: string): string[] => {
-            const result: string[] = [];
-            let current = '';
-            let inQuotes = false;
-            let i = 0;
+        // Papaparse로 CSV 파싱
+        const parseResult = Papa.parse(content.trim(), {
+            header: false,
+            skipEmptyLines: 'greedy',
+            delimiter: '',  // 자동 감지
+        } as Papa.ParseConfig);
 
-            while (i < line.length) {
-                const char = line[i];
-                const nextChar = line[i + 1];
-
-                if (char === '"') {
-                    if (inQuotes && nextChar === '"') {
-                        // 이스케이프된 따옴표 ("")
-                        current += '"';
-                        i += 2;
-                    } else {
-                        // 따옴표 토글
-                        inQuotes = !inQuotes;
-                        i++;
-                    }
-                } else if (char === ',' && !inQuotes) {
-                    // 필드 구분자
-                    result.push(current.trim());
-                    current = '';
-                    i++;
-                } else {
-                    current += char;
-                    i++;
-                }
-            }
-            result.push(current.trim());
-            return result;
-        };
-
-        const lines = content.split(/\r?\n/).filter(line => line.trim());
-
-        if (lines.length === 0) {
-            return { success: false, properties: [], errors: ['빈 파일입니다'], totalLines: 0, parsedLines: 0 };
+        if (!parseResult.data || parseResult.data.length === 0) {
+            return { success: false, properties: [], errors: ['CSV 데이터를 찾을 수 없습니다'], totalLines: 0, parsedLines: 0 };
         }
 
-        // 첫 번째 줄이 헤더인지 확인
-        const firstLine = lines[0].trim();
-        const hasHeader = firstLine.includes('매물명') || firstLine.includes('유형') ||
-                          firstLine.includes('거래') || firstLine.includes('가격');
+        const lines = parseResult.data as string[][];
+        const firstLine = lines[0];
 
-        // 데이터 시작 인덱스
+        // 첫 번째 줄이 헤더인지 확인
+        const hasHeader = firstLine.some((h: string) =>
+            h.includes('매물명') || h.includes('유형') || h.includes('거래') || h.includes('가격')
+        );
+
         const startIndex = hasHeader ? 1 : 0;
 
         // 헤더가 있는 경우 컬럼 인덱스 파악
         let colIndices: { [key: string]: number } = {};
         if (hasHeader) {
-            const headers = parseCSVLine(firstLine);
-            headers.forEach((h, idx) => {
-                const header = h.trim();
+            firstLine.forEach((h: string, idx: number) => {
+                const header = h.trim().replace(/^\uFEFF/, ''); // BOM 제거
                 if (header.includes('매물명') || header.includes('건물명') || header.includes('물건명')) colIndices['매물명'] = idx;
-                else if (header.includes('유형') || header.includes('종류')) colIndices['유형'] = idx;
-                else if (header.includes('거래')) colIndices['거래'] = idx;
-                else if (header.includes('가격') || header.includes('매매가') || header.includes('보증금')) colIndices['가격'] = idx;
+                else if (header.includes('유형') || header.includes('종류') || header.includes('매물유형')) colIndices['유형'] = idx;
+                else if (header.includes('거래') || header.includes('거래타입')) colIndices['거래'] = idx;
+                else if (header.includes('가격') || header.includes('매매가') || header.includes('보증금') || header.includes('매매가/보증금')) colIndices['가격'] = idx;
                 else if (header.includes('월세')) colIndices['월세'] = idx;
-                else if (header.includes('면적')) colIndices['면적'] = idx;
+                else if (header.includes('공급면적') || header.includes('전용면적') || header.includes('면적')) colIndices['면적'] = idx;
                 else if (header.includes('층')) colIndices['층'] = idx;
                 else if (header.includes('방향')) colIndices['방향'] = idx;
                 else if (header.includes('주소') || header.includes('소재지')) colIndices['주소'] = idx;
                 else if (header.includes('확정일') || header.includes('날짜')) colIndices['확정일'] = idx;
-                else if (header.includes('중개사') || header.includes('부동산')) colIndices['중개사'] = idx;
-                else if (header.includes('담당자')) colIndices['담당자'] = idx;
-                else if (header.includes('설명') || header.includes('비고')) colIndices['설명'] = idx;
+                else if (header.includes('중개업소') || header.includes('중개사') || header.includes('부동산')) colIndices['중개사'] = idx;
+                else if (header.includes('책임자명') || header.includes('담당자')) colIndices['담당자'] = idx;
+                else if (header.includes('매물설명') || header.includes('설명') || header.includes('비고')) colIndices['설명'] = idx;
+                else if (header.includes('건물명')) colIndices['건물명'] = idx;
+                else if (header.includes('책임자 전화번호')) colIndices['전화번호'] = idx;
             });
         }
 
-        // CSV 컬럼 순서 (기본값 또는 헤더에서 파악)
         const defaultOrder = ['매물명', '유형', '거래', '가격', '월세', '면적', '층', '방향', '주소', '확정일', '중개사', '담당자', '설명'];
 
         for (let i = startIndex; i < lines.length; i++) {
-            const line = lines[i].trim();
-            if (!line) continue;
-
-            // 개선된 CSV 파싱
-            const values = parseCSVLine(line);
+            const values = lines[i] as string[];
 
             if (values.length < 2) {
-                errors.push(`라인 ${i + 1}: 데이터가 충분하지 않습니다 (최소 2개 필드 필요)`);
+                errors.push(`라인 ${i + 1}: 데이터가 충분하지 않습니다`);
                 continue;
             }
 
-            // 헤더가 있으면 인덱스 기반, 없으면 순서 기반
-            const getValue = (fieldName: string) => {
+            const getValue = (fieldName: string): string => {
                 if (hasHeader && colIndices[fieldName] !== undefined) {
-                    const val = values[colIndices[fieldName]] || '';
-                    // 따옴표 제거
-                    return val.replace(/^["']|["']$/g, '');
+                    const val = values[colIndices[fieldName]];
+                    return val ? val.toString().trim() : '';
                 }
-                // 기본 순서에서 찾기
                 const idx = defaultOrder.indexOf(fieldName);
                 if (idx >= 0 && idx < values.length) {
-                    const val = values[idx];
-                    return val.replace(/^["']|["']$/g, '');
+                    return values[idx] ? values[idx].toString().trim() : '';
                 }
                 return '';
             };
 
+            const articleName = getValue('매물명') || getValue('건물명') || `매물 ${properties.length + 1}`;
+            console.log(`[파싱] 매물명: "${articleName}"`, { 원본값: getValue('매물명'), values });
+
             const property: ParsedProperty = {
-                articleName: getValue('매물명') || `매물 ${properties.length + 1}`,
+                articleName,
                 realEstateTypeCode: 'APT',
                 realEstateTypeName: '아파트',
                 tradeTypeCode: 'A1',
@@ -457,7 +457,7 @@ const PropertyRegister = () => {
                 area2: null,
                 floorInfo: null,
                 direction: null,
-                buildingName: null,
+                buildingName: getValue('건물명') || getValue('매물명') || null,
                 detailAddress: null,
                 articleFeatureDesc: null,
                 articleConfirmYmd: null,
@@ -532,13 +532,27 @@ const PropertyRegister = () => {
                 }
             }
 
-            // 면적 파싱
-            const areaValue = getValue('면적');
-            if (areaValue) {
+            // 면적 파싱 (공급면적 또는 전용면적)
+            let areaValue = getValue('면적');
+            if (!areaValue) {
+                // CSV의 공급면적/전용면적 컬럼 확인
+                if (hasHeader) {
+                    const 공급면적Idx = firstLine.findIndex((h: string) => h.includes('공급면적'));
+                    const 전용면적Idx = firstLine.findIndex((h: string) => h.includes('전용면적'));
+                    if (공급면적Idx >= 0 && values[공급면적Idx]) {
+                        areaValue = values[공급면적Idx].toString().trim();
+                        property.area1 = parseFloat(areaValue) || null;
+                    }
+                    if (전용면적Idx >= 0 && values[전용면적Idx]) {
+                        areaValue = values[전용면적Idx].toString().trim();
+                        property.area2 = parseFloat(areaValue) || null;
+                    }
+                }
+            } else {
                 const areaMatch = areaValue.match(/([\d.]+)/);
                 if (areaMatch) {
                     property.area2 = parseFloat(areaMatch[1]);
-                    property.area1 = property.area2; // 전용=공급으로 동일하게 처리
+                    property.area1 = property.area2;
                 }
             }
 
@@ -574,8 +588,6 @@ const PropertyRegister = () => {
             // 설명
             const descValue = getValue('설명');
             if (descValue) property.articleFeatureDesc = descValue;
-
-            property.buildingName = property.articleName;
 
             properties.push(property);
         }
@@ -798,14 +810,132 @@ const PropertyRegister = () => {
     }, []);
 
     // 파일 파싱
-    const handleParse = useCallback(() => {
+    const handleParse = useCallback(async () => {
         if (!fileContent && !excelData) {
             alert('파일을 먼저 선택해주세요.');
             return;
         }
 
+        // LLM 모드인 경우 API 키 확인 (로컬 제외)
+        if (useLLM && llmProvider !== 'local' && !llmApiKey) {
+            alert('LLM API 키를 입력해주세요.');
+            setShowLLMSettings(true);
+            return;
+        }
+
         setIsParsing(true);
 
+        // 로컬 LLM 파싱 (Transformers.js)
+        if (useLLM && llmProvider === 'local') {
+            try {
+                const properties = extractPropertiesFromText(fileContent);
+
+                const result: ParseResult = {
+                    success: properties.length > 0,
+                    properties: properties.map((p) => ({
+                        articleName: p.articleName,
+                        realEstateTypeCode: p.realEstateTypeCode,
+                        realEstateTypeName: p.realEstateTypeName,
+                        tradeTypeCode: p.tradeTypeCode,
+                        tradeTypeName: p.tradeTypeName,
+                        dealOrWarrantPrc: p.dealOrWarrantPrc,
+                        rentPrc: p.rentPrc,
+                        area1: p.area1,
+                        area2: p.area2,
+                        floorInfo: p.floorInfo,
+                        direction: p.direction,
+                        buildingName: p.buildingName,
+                        detailAddress: p.detailAddress,
+                        articleFeatureDesc: p.articleFeatureDesc,
+                        articleConfirmYmd: p.articleConfirmYmd,
+                        cpName: p.cpName,
+                        realtorName: p.realtorName,
+                        managerName: p.managerName,
+                        managerPhone: p.managerPhone,
+                        tagList: [],
+                        cortarNo: '0000000000',
+                        complexNo: null,
+                    })),
+                    errors: [],
+                    totalLines: properties.length,
+                    parsedLines: properties.length,
+                };
+
+                setParseResult(result);
+                if (result.properties.length > 0) {
+                    setSelectedForSave(new Set(result.properties.map((_, idx) => idx)));
+                } else {
+                    setSelectedForSave(new Set());
+                }
+                setIsParsing(false);
+                return;
+            } catch (error) {
+                console.error('로컬 LLM 파싱 오류:', error);
+                alert(`로컬 LLM 파싱 중 오류가 발생했습니다:\n${error instanceof Error ? error.message : String(error)}`);
+                setIsParsing(false);
+                return;
+            }
+        }
+
+        // LLM API 파싱 (Claude)
+        if (useLLM && llmApiKey) {
+            try {
+                const { properties, error } = await parsePropertiesWithClaude(fileContent, llmApiKey);
+                if (error) {
+                    alert(`LLM 파싱 오류: ${error}`);
+                    setIsParsing(false);
+                    return;
+                }
+
+                // ParsedProperty → ParseResult 변환
+                const result: ParseResult = {
+                    success: properties.length > 0,
+                    properties: properties.map((p) => ({
+                        articleName: p.articleName,
+                        realEstateTypeCode: p.realEstateTypeCode,
+                        realEstateTypeName: p.realEstateTypeName,
+                        tradeTypeCode: p.tradeTypeCode,
+                        tradeTypeName: p.tradeTypeName,
+                        dealOrWarrantPrc: p.dealOrWarrantPrc,
+                        rentPrc: p.rentPrc,
+                        area1: p.area1,
+                        area2: p.area2,
+                        floorInfo: p.floorInfo,
+                        direction: p.direction,
+                        buildingName: p.buildingName,
+                        detailAddress: p.detailAddress,
+                        articleFeatureDesc: p.articleFeatureDesc,
+                        articleConfirmYmd: p.articleConfirmYmd,
+                        cpName: p.cpName,
+                        realtorName: p.realtorName,
+                        managerName: p.managerName,
+                        managerPhone: p.managerPhone,
+                        tagList: [],
+                        cortarNo: '0000000000',
+                        complexNo: null,
+                    })),
+                    errors: [],
+                    totalLines: properties.length,
+                    parsedLines: properties.length,
+                };
+
+                setParseResult(result);
+                if (result.properties.length > 0) {
+                    setSelectedForSave(new Set(result.properties.map((_, idx) => idx)));
+                } else {
+                    setSelectedForSave(new Set());
+                }
+                setIsParsing(false);
+                return;
+            } catch (error) {
+                console.error('LLM 파싱 오류:', error);
+                alert(`LLM 파싱 중 오류가 발생했습니다:\n${error instanceof Error ? error.message : String(error)}`);
+                setIsParsing(false);
+                return;
+            }
+        }
+
+        // 일반 파싱
         setTimeout(() => {
             try {
                 let result: ParseResult;
@@ -818,6 +948,9 @@ const PropertyRegister = () => {
                 } else if (fileExt === 'csv') {
                     // CSV 파일
                     result = parseCSVContent(fileContent);
+                } else if (fileExt === 'pdf') {
+                    // PDF 파일 (텍스트 추출 후 파싱)
+                    result = parseTextContent(fileContent);
                 } else {
                     // TXT 파일 (키:값 형식)
                     result = parseTextContent(fileContent);
@@ -844,7 +977,7 @@ const PropertyRegister = () => {
                 setIsParsing(false);
             }
         }, 100);
-    }, [fileContent, excelData, file, parseTextContent, parseCSVContent, parseExcelContent]);
+    }, [fileContent, excelData, file, parseTextContent, parseCSVContent, parseExcelContent, useLLM, llmApiKey]);
 
     // 전체 선택 토글
     const toggleSelectAll = () => {
@@ -958,6 +1091,8 @@ const PropertyRegister = () => {
             case 'xlsx':
             case 'xls':
                 return <FileSpreadsheet size={20} />;
+            case 'pdf':
+                return <FileText size={20} className="text-red-400" />;
             default:
                 return <FileText size={20} />;
         }
@@ -999,7 +1134,7 @@ const PropertyRegister = () => {
                             type="file"
                             id="file-upload"
                             className="hidden"
-                            accept=".txt,.csv,.xlsx,.xls,.json,.md"
+                            accept=".txt,.csv,.xlsx,.xls,.json,.md,.pdf"
                             onChange={handleFileSelect}
                         />
                         <label htmlFor="file-upload" className="cursor-pointer flex flex-col items-center gap-5">
@@ -1015,6 +1150,33 @@ const PropertyRegister = () => {
                                 <p className="text-sm text-hud-text-muted">
                                     드래그하거나 클릭하여 파일 선택
                                 </p>
+
+                                {/* LLM 옵션 */}
+                                <div className="flex items-center justify-center gap-3 mt-4">
+                                    <button
+                                        onClick={() => setUseLLM(!useLLM)}
+                                        className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-all ${
+                                            useLLM
+                                                ? 'bg-hud-accent-primary text-white'
+                                                : 'bg-hud-bg-secondary text-hud-text-muted border border-hud-border-secondary'
+                                        }`}
+                                    >
+                                        <Brain size={16} />
+                                        {useLLM ? '스마트 파싱 ON' : '스마트 파싱 OFF'}
+                                    </button>
+                                    {useLLM && (
+                                        <select
+                                            value={llmProvider}
+                                            onChange={(e) => setLlmProvider(e.target.value as 'claude' | 'openai' | 'local')}
+                                            className="px-3 py-2 rounded-full bg-hud-bg-secondary text-sm text-hud-text-primary border border-hud-border-secondary"
+                                        >
+                                            <option value="local">로컬 AI (무료)</option>
+                                            <option value="claude">Claude API</option>
+                                            <option value="openai">OpenAI API</option>
+                                        </select>
+                                    )}
+                                </div>
+
                                 <div className="flex items-center justify-center gap-2 mt-4">
                                     <span className="px-3 py-1.5 rounded-full bg-hud-bg-secondary text-xs text-hud-text-muted font-medium border border-hud-border-secondary">
                                         TXT
@@ -1024,6 +1186,9 @@ const PropertyRegister = () => {
                                     </span>
                                     <span className="px-3 py-1.5 rounded-full bg-hud-bg-secondary text-xs text-hud-text-muted font-medium border border-hud-border-secondary">
                                         Excel
+                                    </span>
+                                    <span className="px-3 py-1.5 rounded-full bg-hud-bg-secondary text-xs text-hud-text-muted font-medium border border-hud-border-secondary">
+                                        PDF
                                     </span>
                                 </div>
                             </div>

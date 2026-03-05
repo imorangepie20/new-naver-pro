@@ -37,13 +37,28 @@ const ApartmentTempPropertyList = () => {
 
   // URL 파라미터에서 정보 가져오기
   const complexNo = searchParams.get('complexNo') || '';
+  const complexNosParam = searchParams.get('complexNos') || '';
   const complexName = searchParams.get('complexName') || '';
+  const complexNamesParam = searchParams.get('complexNames') || '';
   const cortarNo = searchParams.get('cortarNo') || '';
   const cortarName = searchParams.get('cortarName') || '';
   const realEstateTypeCode = searchParams.get('realEstateType') || 'APT';
 
+  // 복수 단지 모드: 여러 단지를 선택한 경우
+  const complexNos = complexNosParam ? complexNosParam.split(',') : [];
+  const complexNames = complexNamesParam ? complexNamesParam.split(',') : [];
+  const isMultiComplexMode = complexNos.length > 0;
+
   // 단지 모드 vs 지역 모드 판별
-  const isComplexMode = !!complexNo;
+  const isComplexMode = !!complexNo || isMultiComplexMode;
+
+  // 유효한 complexNo (단일 또는 다중 중 첫번째)
+  const effectiveComplexNo = isMultiComplexMode ? complexNos[0] : complexNo;
+  const effectiveComplexName = isMultiComplexMode
+      ? complexNames.length > 1
+          ? `${complexNames[0]} 외 ${complexNames.length - 1}개`
+          : complexNames[0] || '선택한 단지'
+      : complexName;
 
   // 상태
   const [articles, setArticles] = useState<ArticleWithId[]>([]);
@@ -76,7 +91,7 @@ const ApartmentTempPropertyList = () => {
 
   // API로 매물 로드
   const loadArticles = useCallback(async (page: number = 1, isLoadMore: boolean = false) => {
-    if (!complexNo && !cortarNo) return;
+    if (!effectiveComplexNo && !cortarNo) return;
 
     if (isLoadMore) {
       setIsLoadingMore(true);
@@ -88,16 +103,53 @@ const ApartmentTempPropertyList = () => {
     try {
       const realEstateType = getRealEstateType();
       let response: Response;
+      let newArticles: Article[] = [];
+      let isMoreData = true;
 
-      if (isComplexMode) {
-        // 단지 모드: 단지별 매물 API
+      if (isMultiComplexMode) {
+        // 다중 단지 모드: 모든 단지의 매물을 병렬로 조회
+        const allRequests = complexNos.map(async (cNo) => {
+          const params = new URLSearchParams({
+            realEstateType,
+            tradeType,
+            page: page.toString(),
+            order: 'rank',
+          });
+          const res = await fetch(`${API_BASE}/api/articles/complex/${cNo}?${params.toString()}`);
+          const data = await res.json();
+          return {
+            complexNo: cNo,
+            articles: data.articleList || [],
+            isMore: data.isMoreData ?? true,
+          };
+        });
+
+        const results = await Promise.all(allRequests);
+
+        // 모든 결과를 합치기 (단지별로 그룹핑 정보도 함께 저장)
+        results.forEach((result) => {
+          const articlesWithComplexInfo = result.articles.map((a: Article) => ({
+            ...a,
+            complexNo: result.complexNo, // 단지 ID 저장
+          }));
+          newArticles.push(...articlesWithComplexInfo);
+        });
+
+        // 다중 단지 모드에서는 hasMore를 false로 설정 (무한 스크롤 비활성화)
+        isMoreData = false;
+      } else if (isComplexMode) {
+        // 단일 단지 모드: 단지별 매물 API
         const params = new URLSearchParams({
           realEstateType,
           tradeType,
           page: page.toString(),
           order: 'rank',
         });
-        response = await fetch(`${API_BASE}/api/articles/complex/${complexNo}?${params.toString()}`);
+        response = await fetch(`${API_BASE}/api/articles/complex/${effectiveComplexNo}?${params.toString()}`);
+        const data = await response.json();
+
+        newArticles = data.articleList || [];
+        isMoreData = data.isMoreData ?? (newArticles.length === ITEMS_PER_PAGE);
       } else {
         // 지역 모드: 일반 매물 API
         const params = new URLSearchParams({
@@ -108,14 +160,14 @@ const ApartmentTempPropertyList = () => {
           order: 'rank',
         });
         response = await fetch(`${API_BASE}/api/articles?${params.toString()}`);
-      }
-      const data = await response.json();
+        const data = await response.json();
 
-      const newArticles: Article[] = data.articleList || [];
-      const isMoreData = data.isMoreData ?? (newArticles.length === ITEMS_PER_PAGE);
+        newArticles = data.articleList || [];
+        isMoreData = data.isMoreData ?? (newArticles.length === ITEMS_PER_PAGE);
+      }
 
       // id 추가
-      const prefix = complexNo || cortarNo;
+      const prefix = effectiveComplexNo || cortarNo;
       const articlesWithId: ArticleWithId[] = newArticles.map((a) => ({
         ...a,
         id: `${prefix}_${a.articleNo}`,
@@ -137,17 +189,17 @@ const ApartmentTempPropertyList = () => {
       setIsLoading(false);
       setIsLoadingMore(false);
     }
-  }, [complexNo, cortarNo, isComplexMode, getRealEstateType, tradeType]);
+  }, [effectiveComplexNo, cortarNo, isComplexMode, isMultiComplexMode, complexNos, getRealEstateType, tradeType]);
 
   // 초기 로드
   useEffect(() => {
-    if (complexNo || cortarNo) {
+    if (effectiveComplexNo || cortarNo) {
       setArticles([]);
       setCurrentPage(1);
       setHasMore(true);
       loadArticles(1, false);
     }
-  }, [complexNo, cortarNo, tradeType]); // 거래 방식이 변경되면 다시 로드
+  }, [effectiveComplexNo, cortarNo, tradeType, isMultiComplexMode]); // 거래 방식이 변경되면 다시 로드
 
   // Intersection Observer를 사용한 무한 스크롤
   useEffect(() => {
@@ -182,12 +234,13 @@ const ApartmentTempPropertyList = () => {
 
     switch (sortField) {
       case 'price':
-        const parsePriceToMan = (prc: string | undefined): number => {
+        const parsePriceToMan = (prc: string | number | null | undefined): number => {
           if (!prc) return 0;
+          const strValue = typeof prc === 'number' ? prc.toString() : prc;
           let total = 0;
-          const okMatch = prc.match(/(\d+)억/);
+          const okMatch = strValue.match(/(\d+)억/);
           if (okMatch) total += parseInt(okMatch[1]) * 10000;
-          const remaining = prc.replace(/\d+억\s*/, '');
+          const remaining = strValue.replace(/\d+억\s*/, '');
           const numPart = parseInt(remaining.replace(/,/g, ''));
           if (!isNaN(numPart)) total += numPart;
           return total;
@@ -406,18 +459,21 @@ const ApartmentTempPropertyList = () => {
   };
 
   // 포맷 함수
-  const formatPrice = (priceStr: string | null) => {
-    if (!priceStr) return '-';
+  const formatPrice = (priceStr: string | number | null | undefined) => {
+    if (priceStr === null || priceStr === undefined) return '-';
+
+    // 숫자인 경우 문자열로 변환
+    const strValue = typeof priceStr === 'number' ? priceStr.toString() : priceStr;
 
     // 네이버 API는 이미 포맷된 문자열을 반환 ("5억 3,000", "7,500", "53" 등)
     // "억"이 포함되어 있으면 그대로 표시
-    if (priceStr.includes('억')) {
-      return priceStr;
+    if (strValue.includes('억')) {
+      return strValue;
     }
 
     // 순수 숫자인 경우 (예: "7,500", "53")
-    const num = parseInt(priceStr.replace(/,/g, ''));
-    if (isNaN(num)) return priceStr;
+    const num = parseInt(strValue.replace(/,/g, ''));
+    if (isNaN(num)) return strValue;
 
     if (num >= 10000) {
       const ok = Math.floor(num / 10000);
@@ -447,7 +503,8 @@ const ApartmentTempPropertyList = () => {
 
   // 전체 매물 로드 (모든 페이지 한 번에 로드)
   const loadAllArticles = async () => {
-    if ((!complexNo && !cortarNo) || isLoadingAll || !hasMore) return;
+    // 다중 단지 모드에서는 전체 로드 비활성화 (이미 병렬로 로드됨)
+    if (isMultiComplexMode || (!effectiveComplexNo && !cortarNo) || isLoadingAll || !hasMore) return;
 
     setIsLoadingAll(true);
     const allArticles: ArticleWithId[] = [...articles]; // 이미 로드된 매물
@@ -467,7 +524,7 @@ const ApartmentTempPropertyList = () => {
             page: page.toString(),
             order: 'rank',
           });
-          response = await fetch(`${API_BASE}/api/articles/complex/${complexNo}?${params.toString()}`);
+          response = await fetch(`${API_BASE}/api/articles/complex/${effectiveComplexNo}?${params.toString()}`);
         } else {
           const params = new URLSearchParams({
             cortarNo,
@@ -519,13 +576,23 @@ const ApartmentTempPropertyList = () => {
           </Button>
           <div>
             <h1 className="text-xl font-bold text-hud-text-primary">
-              {complexName || cortarName || '매물'}
+              {effectiveComplexName || cortarName || '매물'}
               <span className="text-hud-text-secondary font-normal ml-2">매물 목록</span>
             </h1>
             <div className="flex items-center gap-2 mt-1 text-sm text-hud-text-muted">
               <span>총 {articles.length}건{hasMore && '+'}</span>
-              <span>·</span>
-              <span>{cortarName}</span>
+              {isMultiComplexMode && complexNames.length > 1 && (
+                  <>
+                      <span>·</span>
+                      <span>{complexNames.length}개 단지 선택</span>
+                  </>
+              )}
+              {cortarName && !isMultiComplexMode && (
+                  <>
+                      <span>·</span>
+                      <span>{cortarName}</span>
+                  </>
+              )}
             </div>
           </div>
         </div>
@@ -567,21 +634,23 @@ const ApartmentTempPropertyList = () => {
           >
             <Download className="w-4 h-4" />
           </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={loadAllArticles}
-            disabled={isLoadingAll || !hasMore || articles.length === 0}
-          >
-            {isLoadingAll ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <>
-                <ListTodo className="w-4 h-4 mr-1" />
-                전체 로드
-              </>
-            )}
-          </Button>
+          {!isMultiComplexMode && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={loadAllArticles}
+              disabled={isLoadingAll || !hasMore || articles.length === 0}
+            >
+              {isLoadingAll ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <>
+                  <ListTodo className="w-4 h-4 mr-1" />
+                  전체 로드
+                </>
+              )}
+            </Button>
+          )}
           <Button
             variant="primary"
             size="sm"
@@ -684,7 +753,12 @@ const ApartmentTempPropertyList = () => {
                           )}
                         </button>
                       </th>
-                      <th className="px-3 py-3 text-left text-xs font-semibold text-hud-text-primary uppercase tracking-wide" style={{ width: '200px' }}>
+                      {isMultiComplexMode && (
+                        <th className="px-3 py-3 text-left text-xs font-semibold text-hud-text-primary uppercase tracking-wide" style={{ width: '120px' }}>
+                          단지명
+                        </th>
+                      )}
+                      <th className="px-3 py-3 text-left text-xs font-semibold text-hud-text-primary uppercase tracking-wide" style={{ width: isMultiComplexMode ? '180px' : '200px' }}>
                         매물명
                       </th>
                       <th className="px-3 py-3 text-left text-xs font-semibold text-hud-text-primary uppercase tracking-wide" style={{ width: '80px' }}>
@@ -716,7 +790,12 @@ const ApartmentTempPropertyList = () => {
 
                   {/* 테이블 바디 - 무한 스크롤 */}
                   <tbody>
-                    {sortedArticles.map((article) => (
+                    {sortedArticles.map((article) => {
+                      // 다중 단지 모드에서 complexNo로 단지명 찾기
+                      const complexIndex = complexNos.indexOf((article as any).complexNo || '');
+                      const articleComplexName = complexIndex >= 0 ? complexNames[complexIndex] : '';
+
+                      return (
                       <tr
                         key={article.id}
                         className={`border-b border-hud-text-muted/20 text-sm transition-all duration-150 ${selectedItems.has(article.id)
@@ -736,6 +815,13 @@ const ApartmentTempPropertyList = () => {
                             )}
                           </button>
                         </td>
+                        {isMultiComplexMode && (
+                          <td className="px-3 py-2">
+                            <p className="truncate text-sm font-medium text-hud-accent-primary" title={articleComplexName}>
+                              {articleComplexName || '-'}
+                            </p>
+                          </td>
+                        )}
                         <td className="px-3 py-2">
                           <p className="truncate font-medium text-hud-text-primary" title={article.articleName}>
                             {article.articleName || article.buildingName || '-'}
@@ -791,7 +877,8 @@ const ApartmentTempPropertyList = () => {
                           </div>
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
 

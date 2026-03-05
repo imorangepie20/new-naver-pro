@@ -3,6 +3,39 @@ import HudCard from '../../components/common/HudCard'
 import Button from '../../components/common/Button'
 
 const UiCard = () => {
+    const hoverRevealCards = [
+        {
+            title: 'Aurora Analytics',
+            category: 'Data Intelligence',
+            emoji: '📈',
+            summary: 'Behavior signals, anomaly alerts, and market snapshots in one place.',
+            detail: 'Hover to preview key metrics, then jump into the full performance workspace.',
+            cta: 'Open Insights',
+            metric: '12 live signals',
+            gradient: 'from-hud-accent-info/35 via-hud-accent-primary/25 to-hud-accent-secondary/30',
+        },
+        {
+            title: 'Pulse Commerce',
+            category: 'Retail Ops',
+            emoji: '🛍️',
+            summary: 'Track conversions, campaign lift, and inventory pressure instantly.',
+            detail: 'Reveal campaign health and action shortcuts with elegant layered transitions.',
+            cta: 'View Campaigns',
+            metric: '+18.4% conversion',
+            gradient: 'from-hud-accent-warning/35 via-hud-accent-secondary/20 to-hud-accent-primary/30',
+        },
+        {
+            title: 'Nexus Projects',
+            category: 'Team Delivery',
+            emoji: '🚀',
+            summary: 'Milestones, blockers, and timeline confidence at a glance.',
+            detail: 'Focus or hover reveals assignees, delivery status, and quick next actions.',
+            cta: 'Review Roadmap',
+            metric: '7 tasks due today',
+            gradient: 'from-hud-accent-success/30 via-hud-accent-info/20 to-hud-accent-primary/30',
+        },
+    ]
+
     return (
         <div className="space-y-6 animate-fade-in">
             {/* Header */}
@@ -141,12 +174,51 @@ const UiCard = () => {
                                 </div>
                             </div>
                             <span className={`px-3 py-1 rounded text-xs shrink-0 ${item.status === 'Completed' ? 'bg-hud-accent-success/10 text-hud-accent-success' :
-                                    item.status === 'In Progress' ? 'bg-hud-accent-info/10 text-hud-accent-info' :
-                                        'bg-hud-accent-warning/10 text-hud-accent-warning'
+                                item.status === 'In Progress' ? 'bg-hud-accent-info/10 text-hud-accent-info' :
+                                    'bg-hud-accent-warning/10 text-hud-accent-warning'
                                 }`}>
                                 {item.status}
                             </span>
                         </div>
+                    ))}
+                </div>
+            </HudCard>
+
+            {/* Hover Reveal Cards */}
+            <HudCard title="Hover Reveal Cards" subtitle="Dynamic layered content that appears on hover or keyboard focus">
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                    {hoverRevealCards.map((card) => (
+                        <article
+                            key={card.title}
+                            className="group relative overflow-hidden rounded-lg hud-card hud-card-bottom"
+                        >
+                            <div className={`relative h-56 bg-gradient-to-br ${card.gradient} p-5 flex flex-col justify-between`}>
+                                <div className="flex items-start justify-between gap-3">
+                                    <span className="px-2.5 py-1 text-xs rounded bg-hud-bg-primary/55 text-hud-text-secondary border border-hud-border-secondary/80 backdrop-blur-sm">
+                                        {card.category}
+                                    </span>
+                                    <span aria-hidden="true" className="text-3xl drop-shadow-sm">{card.emoji}</span>
+                                </div>
+
+                                <div className="space-y-2 transition-all duration-300 motion-reduce:transition-none group-hover:opacity-0 group-hover:translate-y-2 group-focus-within:opacity-0 group-focus-within:translate-y-2 motion-reduce:transform-none">
+                                    <h3 className="text-lg font-semibold text-hud-text-primary">{card.title}</h3>
+                                    <p className="text-sm text-hud-text-secondary max-w-[32ch]">{card.summary}</p>
+                                    <p className="text-xs text-hud-accent-primary font-medium">{card.metric}</p>
+                                </div>
+
+                                <div className="absolute inset-0 p-5 bg-gradient-to-b from-hud-bg-primary/20 via-hud-bg-primary/60 to-hud-bg-primary/95 opacity-0 translate-y-3 transition-all duration-300 motion-reduce:transition-none motion-reduce:transform-none group-hover:opacity-100 group-hover:translate-y-0 group-focus-within:opacity-100 group-focus-within:translate-y-0 flex flex-col justify-end">
+                                    <p className="text-sm text-hud-text-secondary">{card.detail}</p>
+                                    <button
+                                        type="button"
+                                        className="mt-4 inline-flex items-center gap-2 px-3 py-2 rounded-md bg-hud-accent-primary text-hud-bg-primary text-sm font-medium hover:bg-hud-accent-primary/90 transition-hud motion-reduce:transition-none focus:outline-none focus-visible:ring-2 focus-visible:ring-hud-accent-primary focus-visible:ring-offset-2 focus-visible:ring-offset-hud-bg-primary w-fit"
+                                        aria-label={`${card.cta} for ${card.title}`}
+                                    >
+                                        {card.cta}
+                                        <ExternalLink size={15} />
+                                    </button>
+                                </div>
+                            </div>
+                        </article>
                     ))}
                 </div>
             </HudCard>

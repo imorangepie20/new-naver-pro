@@ -17,7 +17,6 @@ import {
   Filter,
   Home,
   Loader2,
-  HelpCircle,
 } from 'lucide-react';
 import HudCard from '../../components/common/HudCard';
 import Button from '../../components/common/Button';
@@ -45,6 +44,10 @@ const ApartmentRegularPropertyList = () => {
   const [showExportModal, setShowExportModal] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // 전체 삭제 진행 상태
+  const [isDeletingAll, setIsDeletingAll] = useState(false);
+  const [deleteProgress, setDeleteProgress] = useState({ current: 0, total: 0 });
 
   // 정렬 상태
   const [sortField, setSortField] = useState<'savedAt' | 'price' | 'area' | 'complex'>('savedAt');
@@ -288,20 +291,40 @@ const ApartmentRegularPropertyList = () => {
     if (articles.length === 0) return;
     if (!confirm(`정말로 전체 ${articles.length}개 매물을 모두 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.`)) return;
 
+    setIsDeletingAll(true);
+    setDeleteProgress({ current: 0, total: articles.length });
+
     try {
-      // 개별 삭제 요청 (한 번에 50개씩)
       const articleNos = articles.map((a) => a.id);
       let deletedCount = 0;
+      const deletedIds: string[] = [];
 
-      for (const id of articleNos) {
-        const response = await fetch(`${API_BASE}/api/properties/${id}`, {
-          method: 'DELETE',
+      // 배치 처리 (한 번에 10개씩 병렬 처리)
+      const BATCH_SIZE = 10;
+      for (let i = 0; i < articleNos.length; i += BATCH_SIZE) {
+        const batch = articleNos.slice(i, Math.min(i + BATCH_SIZE, articleNos.length));
+
+        const deletePromises = batch.map(async (id) => {
+          const response = await fetch(`${API_BASE}/api/properties/${id}`, {
+            method: 'DELETE',
+          });
+          if (response.ok) {
+            deletedCount++;
+            deletedIds.push(id);
+          }
+          return { id, success: response.ok };
         });
-        if (response.ok) deletedCount++;
+
+        await Promise.all(deletePromises);
+
+        // 진행 상태 업데이트
+        setDeleteProgress({ current: deletedCount, total: articleNos.length });
+
+        // 삭제된 항목을 로컬 상태에서 제거
+        setArticles((prev) => prev.filter((a) => !deletedIds.includes(a.id)));
       }
 
       if (deletedCount > 0) {
-        setArticles([]);
         setSelectedItems(new Set());
         setCurrentPage(1);
         alert(`${deletedCount}개 삭제 완료`);
@@ -311,6 +334,9 @@ const ApartmentRegularPropertyList = () => {
     } catch (error) {
       console.error('전체 삭제 실패:', error);
       alert('전체 삭제에 실패했습니다.');
+    } finally {
+      setIsDeletingAll(false);
+      setDeleteProgress({ current: 0, total: 0 });
     }
   };
 
@@ -936,6 +962,53 @@ const ApartmentRegularPropertyList = () => {
         title="정규 매물 엑셀 다운로드"
         totalCount={selectedItems.size > 0 ? selectedItems.size : processedArticles.length}
       />
+
+      {/* 전체 삭제 진행 프로그래스 바 모달 */}
+      {isDeletingAll && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 animate-fade-in">
+          <div className="bg-hud-bg-secondary border border-hud-border-primary rounded-2xl p-8 max-w-md w-full mx-4 shadow-2xl">
+            <div className="flex flex-col items-center gap-6">
+              {/* 애니메이션 아이콘 */}
+              <div className="relative">
+                <div className="absolute inset-0 bg-hud-accent-danger/20 rounded-full animate-ping" />
+                <div className="relative w-20 h-20 bg-hud-accent-danger/10 rounded-full flex items-center justify-center">
+                  <Trash2 className="w-10 h-10 text-hud-accent-danger animate-pulse" />
+                </div>
+              </div>
+
+              {/* 텍스트 */}
+              <div className="text-center space-y-2">
+                <h3 className="text-xl font-bold text-hud-text-primary">전체 삭제 중...</h3>
+                <p className="text-sm text-hud-text-muted">
+                  {deleteProgress.current} / {deleteProgress.total}개 삭제 완료
+                </p>
+              </div>
+
+              {/* 프로그래스 바 */}
+              <div className="w-full space-y-2">
+                <div className="h-3 bg-hud-bg-primary rounded-full overflow-hidden border border-hud-border-primary/30">
+                  <div
+                    className="h-full bg-gradient-to-r from-hud-accent-danger to-hud-accent-danger/70 transition-all duration-300 ease-out"
+                    style={{
+                      width: `${deleteProgress.total > 0 ? (deleteProgress.current / deleteProgress.total) * 100 : 0}%`,
+                    }}
+                  />
+                </div>
+                <div className="flex justify-between text-xs text-hud-text-muted">
+                  <span>{deleteProgress.total > 0 ? Math.round((deleteProgress.current / deleteProgress.total) * 100) : 0}%</span>
+                  <span>잠시만 기다려주세요</span>
+                </div>
+              </div>
+
+              {/* 로딩 스피너 */}
+              <div className="flex items-center gap-2 text-sm text-hud-text-muted">
+                <Loader2 className="w-4 h-4 animate-spin text-hud-accent-primary" />
+                <span>서버에서 삭제 중입니다</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
