@@ -291,6 +291,53 @@ export class NaverLandClient {
   }
 
   /**
+   * 단지 상세 정보 조회 (cortarAddress, roadAddress, detailAddress 포함)
+   * 두 가지 API를 병렬 호출:
+   *  1. initial=Y → complex 객체에 cortarAddress 포함
+   *  2. sameAddressGroup=false → complexDetail 객체에 roadAddress, detailAddress 포함
+   * @param complexNo 단지 번호
+   */
+  async getComplexDetail(complexNo: string): Promise<any> {
+    await this.setAuthHeader();
+
+    const referer = `https://new.land.naver.com/complexes/${complexNo}`;
+
+    // 두 API를 병렬로 호출
+    const [initialResponse, detailResponse] = await Promise.all([
+      this.client.get(`/complexes/${complexNo}`, {
+        params: { complexNo, initial: 'Y' },
+        headers: { 'Referer': referer },
+      }).catch(() => null),
+      this.client.get(`/complexes/${complexNo}`, {
+        params: { sameAddressGroup: false },
+        headers: { 'Referer': referer },
+      }).catch(() => null),
+    ]);
+
+    // 두 응답을 합침
+    const result: any = {};
+
+    // initial=Y 응답에서 complex 객체 (cortarAddress 포함)
+    if (initialResponse?.data?.complex) {
+      result.complex = initialResponse.data.complex;
+    } else if (initialResponse?.data) {
+      // 응답 자체가 complex 객체일 수 있음
+      result.complex = initialResponse.data;
+    }
+
+    // sameAddressGroup=false 응답에서 complexDetail 객체 (roadAddress, detailAddress 포함)
+    if (detailResponse?.data?.complexDetail) {
+      result.complexDetail = detailResponse.data.complexDetail;
+    } else if (detailResponse?.data) {
+      result.complexDetail = detailResponse.data;
+    }
+
+    console.log(`[getComplexDetail] ${complexNo}: cortarAddress=${result.complex?.cortarAddress}, roadAddress=${result.complexDetail?.roadAddress}`);
+
+    return result;
+  }
+
+  /**
    * 매물타입 코드들을 콜론 구분 문자열로 변환 (URL 인코딩용)
    * @param types 매물타입 코드 배열
    */

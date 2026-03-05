@@ -189,7 +189,7 @@ const UploadedPropertyList = () => {
 
     try {
       // 중앙 DB에서 업로드 매물만 가져오기
-      const response = await fetch(`${API_BASE}/api/properties?dataSource=UPLOAD&limit=1000`);
+      const response = await fetch(`${API_BASE}/api/properties?dataSource=UPLOAD`);
 
       if (!response.ok) {
         throw new Error('서버 조회 실패');

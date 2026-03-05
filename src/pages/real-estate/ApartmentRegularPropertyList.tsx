@@ -25,6 +25,7 @@ import type { Article } from '../../types/naver-land';
 
 const ITEMS_PER_PAGE = 50;
 import { API_BASE } from '../../lib/api';
+import { useAuthStore } from '../../stores/authStore';
 
 // 정규 매물 타입
 interface RegularArticle extends Article {
@@ -80,7 +81,7 @@ const ApartmentRegularPropertyList = () => {
 
     try {
       // 중앙 DB에서 네이버 매물만 가져오기
-      const response = await fetch(`${API_BASE}/api/properties?dataSource=NAVER&limit=1000`);
+      const response = await fetch(`${API_BASE}/api/properties?dataSource=NAVER`);
 
       if (!response.ok) {
         throw new Error('서버 조회 실패');
@@ -405,9 +406,19 @@ const ApartmentRegularPropertyList = () => {
             case 'buildingName':
               value = article.buildingName || '';
               break;
-            case 'detailAddress':
-              value = article.detailAddress || '';
+            case 'cortarAddress':
+              value = article.cortarAddress || '';
               break;
+            case 'roadAddress': {
+              // 풀 도로명 주소 조합: cortarAddress에서 시/구 + roadAddress + detailAddress
+              const cortar = article.cortarAddress || '';
+              const parts = cortar.split(' ');
+              const prefix = parts.length >= 2 ? parts.slice(0, -1).join(' ') + ' ' : '';
+              const road = (article as any).roadAddress || '';
+              const det = article.detailAddress ? ' ' + article.detailAddress : '';
+              value = road ? `${prefix}${road}${det}` : '';
+              break;
+            }
             case 'articleFeatureDesc':
               value = article.articleFeatureDesc || '';
               break;
@@ -806,6 +817,9 @@ const ApartmentRegularPropertyList = () => {
                   <th className="px-3 py-3 text-left text-xs font-semibold text-hud-text-primary uppercase tracking-wide" style={{ width: '200px' }} title="단지명 또는 매물 제목">
                     단지명/매물명
                   </th>
+                  <th className="px-3 py-3 text-left text-xs font-semibold text-hud-text-primary uppercase tracking-wide" style={{ width: '180px' }} title="단지 주소">
+                    주소
+                  </th>
                   <th className="px-3 py-3 text-center text-xs font-semibold text-hud-text-primary uppercase tracking-wide" style={{ width: '80px' }} title="아파트, 오피스텔, 빌라 등 매물 종류">
                     유형
                   </th>
@@ -863,6 +877,23 @@ const ApartmentRegularPropertyList = () => {
                       <p className="text-xs text-hud-text-muted truncate mt-0.5" title={article.articleName}>
                         {article.articleName}
                       </p>
+                    </td>
+                    <td className="px-3 py-2">
+                      <p className="text-xs text-hud-text-secondary truncate" title={article.cortarAddress || ''}>
+                        {article.cortarAddress || '-'}
+                      </p>
+                      {(article as any).roadAddress && (() => {
+                        const cortar = article.cortarAddress || '';
+                        const parts = cortar.split(' ');
+                        const prefix = parts.length >= 2 ? parts.slice(0, -1).join(' ') + ' ' : '';
+                        const detail = (article as any).detailAddress ? ' ' + (article as any).detailAddress : '';
+                        const fullRoad = `${prefix}${(article as any).roadAddress}${detail}`;
+                        return (
+                          <p className="text-[10px] text-hud-text-muted truncate mt-0.5" title={fullRoad}>
+                            {fullRoad}
+                          </p>
+                        );
+                      })()}
                     </td>
                     <td className="px-3 py-2 text-center">
                       <span className="text-xs px-2 py-1 bg-hud-bg-secondary rounded-md text-hud-text-secondary">

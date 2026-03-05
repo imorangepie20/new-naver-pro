@@ -1,6 +1,6 @@
 # 세션 컨텍스트 기록
 
-> 최종 업데이트: 2026-03-04 (스마트 파싱 기능 추가 완료)
+> 최종 업데이트: 2026-03-05 (사용자별 데이터 분리 구현 완료)
 
 ---
 
@@ -27,18 +27,25 @@
 ---
 
 ## 데이터베이스 연결 정보
+### 로컬 개발용
 | 항목 | 값 |
 |------|-----|
 | Host | localhost |
 | Port | 5432 |
-| Database | naver_land |
-| User | root |
-| Password | password |
-| Prisma Studio | http://localhost:5555 |
+| Database | imapplepie |
+| User | woosungjo |
+| Prisma Studio | npx prisma studio |
+
+### Railway 배포용
+| 항목 | 값 |
+|------|-----|
+| 내부 호스트 | postgres.railway.internal:5432 |
+| Database | railway |
+| Railway 프로젝트 | new-naver-pro | |
 
 ---
 
-## DB 스키마 구조 (14개 모델)
+## DB 스키마 구조 (15개 모델)
 
 ### 사용자 관리 (개인 데이터)
 - **User**: 사용자 정보, 테마 설정, 인증 정보
@@ -51,7 +58,7 @@
 ### 부동산 데이터 (공용)
 - **Region**: 지역 정보 (계층적 구조: 시도 > 시군구 > 읍면동)
 - **Complex**: 단지 정보 (아파트/오피스텔)
-- **Property**: 매물 상세 정보 (네이버 크롤링 + 수동 입력)
+- **Property**: 매물 상세 정보 (네이버 크롤링 + 수동 입력, userId로 사용자 분리)
 - **PriceHistory**: 가격 이력 (시계열 데이터)
 
 ### 관리 기능 (개인 데이터)
@@ -74,6 +81,20 @@
 # 방법 2: 개별 실행
 npm run dev        # 프론트엔드 (http://localhost:5173)
 npm run dev:api    # 백엔드 (http://localhost:3001)
+```
+
+### 외부 접속 (핸드폰 등)
+```bash
+# .env 파일 생성 (이미 생성됨)
+echo "VITE_API_BASE=http://imapplepie20.tplinkdns.com:3001" > .env
+
+# 백엔드 실행
+npm run dev:api
+
+# 프론트엔드 실행
+npm run dev
+
+# 핸드폰에서 http://imapplepie20.tplinkdns.com:5173 접속
 ```
 
 ### 프로덕션 모드
@@ -436,3 +457,45 @@ npm start          # 단일 서버 실행 (http://localhost:3001)
   - **빠른 통계 카드**: 이번 달/오늘/반복/회의 일정 수 표시
   - **파일**: `src/pages/Calendar.tsx`, `prisma/schema.prisma`
   - **라이브러리 추가**: framer-motion, react-hotkeys-hook
+
+- **2026-03-05**: 사용자별 데이터 분리 구현 완료
+  - **요구사항**: Property 테이블에 userId가 없어 모든 매물이 공용으로 저장됨 → 사용자별 분리 필요
+  - **DB 스키마**: Property 모델에 userId 필드 추가 (이미 존재, 인덱스 포함)
+  - **JWT 인증 API 구현** (`src/server/auth.ts`):
+    - `POST /api/auth/register` - 회원가입 (비밀번호 bcrypt 해시)
+    - `POST /api/auth/login` - 로그인 (JWT 토큰 발급, 7일 유효)
+    - `GET /api/auth/me` - 현재 사용자 정보
+    - getUserIdFromRequest 함수 - Authorization 헤더에서 userId 추출
+  - **매물 API 사용자 필터링**:
+    - `GET /api/properties` - 로그인 시 본인 매물만, 비로그인 시 공용 매물(userId=null)만
+    - `POST /api/properties` - userId 자동 저장
+    - `POST /api/properties/bulk` - userId 자동 저장
+    - `PUT /api/properties/:articleNo` - 소유자 확인 후 수정 (403 에러)
+    - `DELETE /api/properties/:articleNo` - 소유자 확인 후 삭제 (403 에러)
+  - **프론트엔드**: authStore에 authFetch 함수 추가 (Authorization 헤더 자동 추가)
+  - **테스트 완료**: 회원가입 → 로그인 → 매물 등록(userId 저장 확인) → 매물 조회(필터링 확인)
+  - **파일**: `src/server/auth.ts`, `src/stores/authStore.ts`, `src/server/index.ts`
+
+- **2026-03-05**: 로그인 오류 해결 완료
+  - **문제 1**: src/server/index.ts에 중복된 auth 엔드포인트 정의
+    - Line 15: `app.route('/api/auth', authRouter)` - auth.ts 라우터 연결
+    - Line 2247-2442: /api/auth/register, /api/auth/login, /api/auth/me 등 다시 정의
+    - **해결**: 중복 코드 제거 (auth.ts만 사용)
+  - **문제 2**: DATABASE_URL 환경 변수 누락
+    - Railway PostgreSQL은 `postgres.railway.internal` (내부 네트워크 전용)
+    - 로컬에서 접근 불가 → 서버 시작 실패
+    - **해결**: 로컬 PostgreSQL 사용 (brew postgresql@16)
+  - **문제 3**: Railway PostgreSQL 공개 도메인 없음
+    - Railway PostgreSQL의 `serviceDomains: []` - 공개 접속 불가
+    - Railway proxy나 터널링 필요하지만 사용자가 원하지 않음
+    - **해결**: 로컬 개발용 DB와 Railway 배포용 DB 분리
+  - **최종 해결책**:
+    - 로컬: `postgresql://woosungjo@localhost:5432/imapplepie`
+    - Railway 배포: Railway 내부 PostgreSQL 사용
+    - .env.development에 로컬 DB 설정
+    - brew services start postgresql@16로 로컬 DB 시작
+    - `npx prisma db push`로 스키마 동기화
+  - **테스트 완료**:
+    - 회원가입: `POST /api/auth/register` → ✅ success
+    - 로그인: `POST /api/auth/login` → ✅ success
+  - **파일**: `src/server/index.ts`, `src/server/auth.ts`, `.env.development`

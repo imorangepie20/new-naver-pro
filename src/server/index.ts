@@ -7,8 +7,12 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import prisma from '../lib/db/prisma';
 import tokenManager from '../lib/scraper/token-manager';
+import authRouter, { getUserIdFromRequest } from './auth';
 
 const app = new Hono();
+
+// 인증 라우터 연결
+app.route('/api/auth', authRouter);
 
 // CORS 설정
 app.use('/*', cors({
@@ -255,6 +259,7 @@ app.get('/api/regions/tree', async (c) => {
  */
 app.post('/api/properties/bulk', async (c) => {
   try {
+    const userId = await getUserIdFromRequest(c);
     const body = await c.req.json();
     const { articles, dataSource } = body;
 
@@ -264,6 +269,31 @@ app.post('/api/properties/bulk', async (c) => {
 
     // dataSource가 없으면 NAVER로 기본값 (네이버 검색에서 온 데이터)
     const finalDataSource = dataSource || 'NAVER';
+
+    // complexNo 기반으로 주소 정보 일괄 조회 (매물에 주소가 없을 때 Complex에서 가져오기)
+    const complexNos = [...new Set(
+      articles
+        .map((a: any) => a.complexNo)
+        .filter((no: string | undefined) => !!no)
+    )] as string[];
+
+    let complexAddressMap: Record<string, { cortarAddress: string | null; roadAddress: string | null; detailAddress: string | null }> = {};
+    if (complexNos.length > 0) {
+      const complexes = await prisma.complex.findMany({
+        where: { complexNo: { in: complexNos } },
+        select: { complexNo: true, cortarAddress: true, roadAddress: true, detailAddress: true },
+      });
+      for (const cx of complexes) {
+        if (cx.cortarAddress || cx.roadAddress) {
+          complexAddressMap[cx.complexNo] = {
+            cortarAddress: cx.cortarAddress,
+            roadAddress: cx.roadAddress,
+            detailAddress: cx.detailAddress,
+          };
+        }
+      }
+      console.log(`[BulkSave] Found addresses for ${Object.keys(complexAddressMap).length}/${complexNos.length} complexes`);
+    }
 
     let savedCount = 0;
     let skippedCount = 0;
@@ -351,6 +381,8 @@ app.post('/api/properties/bulk', async (c) => {
             latitude: parseCoord(article.latitude),
             longitude: parseCoord(article.longitude),
             cortarNo: article.cortarNo || '0000000000',
+            cortarAddress: article.cortarAddress || (article.complexNo && complexAddressMap[article.complexNo]?.cortarAddress) || null,
+            roadAddress: article.roadAddress || (article.complexNo && complexAddressMap[article.complexNo]?.roadAddress) || null,
             detailAddress: article.detailAddress || null,
             articleConfirmYmd: article.articleConfirmYmd || null,
             articleFeatureDesc: article.articleFeatureDesc || null,
@@ -361,6 +393,7 @@ app.post('/api/properties/bulk', async (c) => {
             cpMobileArticleUrl: article.cpMobileArticleUrl || null,
             complexNo: article.complexNo || null,
             dataSource: finalDataSource, // NAVER(크롤링) 또는 UPLOAD(파일)
+            userId, // 사용자 ID (로그인한 경우)
             lastCrawledAt: new Date(),
             cacheExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30일
           },
@@ -382,6 +415,8 @@ app.post('/api/properties/bulk', async (c) => {
             latitude: parseCoord(article.latitude),
             longitude: parseCoord(article.longitude),
             cortarNo: article.cortarNo || '0000000000',
+            cortarAddress: article.cortarAddress || (article.complexNo && complexAddressMap[article.complexNo]?.cortarAddress) || null,
+            roadAddress: article.roadAddress || (article.complexNo && complexAddressMap[article.complexNo]?.roadAddress) || null,
             detailAddress: article.detailAddress || null,
             articleConfirmYmd: article.articleConfirmYmd || null,
             articleFeatureDesc: article.articleFeatureDesc || null,
@@ -392,6 +427,7 @@ app.post('/api/properties/bulk', async (c) => {
             cpMobileArticleUrl: article.cpMobileArticleUrl || null,
             complexNo: article.complexNo || null,
             dataSource: finalDataSource, // NAVER(크롤링) 또는 UPLOAD(파일)
+            userId, // 사용자 ID (로그인한 경우)
             lastCrawledAt: new Date(),
             cacheExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
           },
@@ -436,22 +472,101 @@ app.post('/api/properties/bulk', async (c) => {
 });
 
 /**
+ * POST /api/properties/backfill-addresses
+ * 기존 매물의 주소가 비어있는 경우 complexNo 기반으로 네이버 API에서 주소를 가져와 업데이트
+ */
+app.post('/api/properties/backfill-addresses', async (c) => {
+  try {
+    const { default: naverLandClient } = await import('../lib/scraper/naver-client');
+
+    // cortarAddress가 null이고 complexNo가 있는 매물 조회
+    const propertiesWithoutAddress = await prisma.property.findMany({
+      where: {
+        cortarAddress: null,
+        complexNo: { not: null },
+      },
+      select: { articleNo: true, complexNo: true },
+    });
+
+    if (propertiesWithoutAddress.length === 0) {
+      return c.json({ success: true, message: '업데이트할 매물이 없습니다.', updatedCount: 0 });
+    }
+
+    // 고유 complexNo 추출
+    const uniqueComplexNos = [...new Set(
+      propertiesWithoutAddress.map(p => p.complexNo).filter(Boolean)
+    )] as string[];
+
+    console.log(`[Backfill] ${propertiesWithoutAddress.length}개 매물, ${uniqueComplexNos.length}개 단지의 주소 업데이트 시작`);
+
+    // 각 complexNo별로 주소 조회
+    const addressMap: Record<string, { cortarAddress: string | null; roadAddress: string | null; detailAddress: string | null }> = {};
+
+    for (const cNo of uniqueComplexNos) {
+      try {
+        const detail = await naverLandClient.getComplexDetail(cNo);
+        const cortarAddress = detail?.complex?.cortarAddress || null;
+        const roadAddress = detail?.complexDetail?.roadAddress || null;
+        const detailAddress = detail?.complexDetail?.detailAddress || null;
+
+        if (cortarAddress || roadAddress) {
+          addressMap[cNo] = { cortarAddress, roadAddress, detailAddress };
+          console.log(`[Backfill] ${cNo}: cortarAddress=${cortarAddress}, roadAddress=${roadAddress}`);
+        }
+
+        // Rate limiting 방지
+        await new Promise(resolve => setTimeout(resolve, 200));
+      } catch (err) {
+        console.error(`[Backfill] Failed to fetch detail for ${cNo}:`, err);
+      }
+    }
+
+    // 매물 업데이트
+    let updatedCount = 0;
+    for (const prop of propertiesWithoutAddress) {
+      if (prop.complexNo && addressMap[prop.complexNo]) {
+        const addr = addressMap[prop.complexNo];
+        await prisma.property.update({
+          where: { articleNo: prop.articleNo },
+          data: {
+            cortarAddress: addr.cortarAddress,
+            roadAddress: addr.roadAddress,
+            detailAddress: addr.detailAddress,
+          },
+        });
+        updatedCount++;
+      }
+    }
+
+    console.log(`[Backfill] 완료: ${updatedCount}/${propertiesWithoutAddress.length}개 업데이트`);
+    return c.json({ success: true, updatedCount, totalChecked: propertiesWithoutAddress.length });
+  } catch (error) {
+    console.error('Backfill error:', error);
+    return c.json({ error: 'Failed to backfill addresses' }, 500);
+  }
+});
+
+/**
  * GET /api/properties
- * 중앙 DB 매물 목록 조회
+ * 중앙 DB 매물 목록 조회 (사용자별 필터링)
  * @query dataSource - NAVER(네이버), UPLOAD(파일업로드), ALL(전체)
  * @query tradeTypeCode - 거래방식 필터 (A1, B1, B2, B3)
  * @query cortarNo - 지역 코드 필터
  * @query page - 페이지 번호 (default: 1)
  * @query limit - 페이지 당 개수 (default: 50)
+ * @query allUsers - true이면 모든 사용자 매물 조회 (관리자용)
  */
 app.get('/api/properties', async (c) => {
   try {
+    const userId = await getUserIdFromRequest(c);
     const dataSource = c.req.query('dataSource') || 'ALL';
     const tradeTypeCode = c.req.query('tradeTypeCode');
     const cortarNo = c.req.query('cortarNo');
     const page = parseInt(c.req.query('page') || '1');
-    const limit = parseInt(c.req.query('limit') || '50');
-    const skip = (page - 1) * limit;
+    const limitParam = c.req.query('limit');
+    const limit = limitParam ? parseInt(limitParam) : null;
+    const skip = (page - 1) * (limit || 0);
+    const allUsers = c.req.query('allUsers') === 'true';
 
     // where 조건构建
     const where: any = {};
@@ -464,12 +579,22 @@ app.get('/api/properties', async (c) => {
     if (cortarNo) {
       where.cortarNo = cortarNo;
     }
+    // 사용자 필터: 로그인한 경우 본인 매물만 조회 (allUsers=true 제외)
+    if (userId && !allUsers) {
+      where.userId = userId;
+    } else if (!userId) {
+      // 비로그인: 빈 결과 반환 (로그인 필요)
+      return c.json({
+        success: true,
+        properties: [],
+        pagination: { page, limit, total: 0, totalPages: 0 },
+      });
+    }
 
     const [properties, totalCount] = await Promise.all([
       prisma.property.findMany({
         where,
-        skip,
-        take: limit,
+        ...(limit ? { skip, take: limit } : {}),
         orderBy: { createdAt: 'desc' },
       }),
       prisma.property.count({ where }),
@@ -504,11 +629,27 @@ app.get('/api/properties', async (c) => {
 
 /**
  * DELETE /api/properties/:articleNo
- * 중앙 DB 매물 삭제
+ * 중앙 DB 매물 삭제 (소유자 확인)
  */
 app.delete('/api/properties/:articleNo', async (c) => {
   try {
+    const userId = await getUserIdFromRequest(c);
     const articleNo = c.req.param('articleNo');
+
+    // 먼저 매물 조회
+    const property = await prisma.property.findUnique({
+      where: { articleNo },
+      select: { userId: true },
+    });
+
+    if (!property) {
+      return c.json({ error: '매물을 찾을 수 없습니다.' }, 404);
+    }
+
+    // 소유자 확인 (null인 경우 누구나 삭제 가능, 아니면 본인만)
+    if (property.userId !== null && property.userId !== userId) {
+      return c.json({ error: '삭제 권한이 없습니다.' }, 403);
+    }
 
     await prisma.property.delete({
       where: { articleNo },
@@ -528,12 +669,28 @@ app.delete('/api/properties/:articleNo', async (c) => {
 
 /**
  * PUT /api/properties/:articleNo
- * 중앙 DB 매물 수정
+ * 중앙 DB 매물 수정 (소유자 확인)
  */
 app.put('/api/properties/:articleNo', async (c) => {
   try {
+    const userId = await getUserIdFromRequest(c);
     const articleNo = c.req.param('articleNo');
     const body = await c.req.json();
+
+    // 먼저 매물 조회하여 소유자 확인
+    const property = await prisma.property.findUnique({
+      where: { articleNo },
+      select: { userId: true },
+    });
+
+    if (!property) {
+      return c.json({ error: '매물을 찾을 수 없습니다.' }, 404);
+    }
+
+    // 소유자 확인 (null인 경우 누구나 수정 가능, 아니면 본인만)
+    if (property.userId !== null && property.userId !== userId) {
+      return c.json({ error: '수정 권한이 없습니다.' }, 403);
+    }
 
     // 업데이트 가능한 필드만 추출
     const updateData: any = {};
@@ -557,12 +714,12 @@ app.put('/api/properties/:articleNo', async (c) => {
     }
 
     // 매물 수정
-    const property = await prisma.property.update({
+    const updatedProperty = await prisma.property.update({
       where: { articleNo },
       data: updateData,
     });
 
-    return c.json({ success: true, property });
+    return c.json({ success: true, property: updatedProperty });
   } catch (error) {
     console.error('Property update error:', error);
     return c.json(
@@ -580,6 +737,8 @@ app.put('/api/properties/:articleNo', async (c) => {
  */
 app.post('/api/properties', async (c) => {
   try {
+    const userId = await getUserIdFromRequest(c);
+    console.log('[POST /api/properties] userId:', userId);
     const body = await c.req.json();
 
     // 필수 필드 검증
@@ -616,6 +775,7 @@ app.post('/api/properties', async (c) => {
         latitude: body.latitude || null,
         longitude: body.longitude || null,
         cortarNo: body.cortarNo || '0000000000',
+        cortarAddress: body.cortarAddress || null,
         detailAddress: body.detailAddress || null,
         articleConfirmYmd: body.articleConfirmYmd || null,
         articleFeatureDesc: body.articleFeatureDesc || null,
@@ -626,6 +786,7 @@ app.post('/api/properties', async (c) => {
         cpMobileArticleUrl: body.cpMobileArticleUrl || null,
         complexNo: body.complexNo || null,
         dataSource: body.dataSource || 'NAVER', // 데이터 소스 (기본: NAVER)
+        userId, // 사용자 ID (로그인한 경우)
         lastCrawledAt: new Date(),
         cacheExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30일
       },
@@ -681,6 +842,61 @@ app.get('/api/articles/complex/:complexNo', async (c) => {
       buildingNos: c.req.query('buildingNos') || '',
       areaNos: c.req.query('areaNos') || '',
     });
+
+    // 단지 주소 정보를 DB에서 조회하여 매물에 주입
+    if (response.articleList && Array.isArray(response.articleList)) {
+      let complexAddress: { cortarAddress: string | null; roadAddress: string | null; detailAddress: string | null } = {
+        cortarAddress: null, roadAddress: null, detailAddress: null,
+      };
+
+      // 1. DB Complex 테이블에서 주소 조회
+      const complex = await prisma.complex.findUnique({
+        where: { complexNo },
+        select: { cortarAddress: true, roadAddress: true, detailAddress: true },
+      });
+
+      if (complex && (complex.cortarAddress || complex.roadAddress)) {
+        complexAddress = complex;
+        console.log(`[ArticlesComplex] Using DB address for ${complexNo}: ${complex.cortarAddress}`);
+      } else {
+        // 2. DB에 주소가 없으면 네이버 API로 조회 후 DB 업데이트
+        try {
+          const detail = await naverLandClient.getComplexDetail(complexNo);
+          const cortarAddress = detail?.complex?.cortarAddress || null;
+          const roadAddress = detail?.complexDetail?.roadAddress || null;
+          const detailAddr = detail?.complexDetail?.detailAddress || null;
+
+          if (cortarAddress || roadAddress) {
+            complexAddress = { cortarAddress, roadAddress, detailAddress: detailAddr };
+            console.log(`[ArticlesComplex] Fetched address from Naver for ${complexNo}: ${cortarAddress}`);
+
+            // DB에 주소 업데이트 (비동기)
+            prisma.complex.update({
+              where: { complexNo },
+              data: { cortarAddress, roadAddress, detailAddress: detailAddr },
+            }).catch(err => console.error(`[ArticlesComplex] Failed to update complex address:`, err));
+          }
+        } catch (err) {
+          console.error(`[ArticlesComplex] Failed to fetch complex detail for ${complexNo}:`, err);
+        }
+      }
+
+      // 3. 각 매물에 주소 정보 주입
+      if (complexAddress.cortarAddress || complexAddress.roadAddress) {
+        response.articleList = response.articleList.map((article: any) => ({
+          ...article,
+          cortarAddress: article.cortarAddress || complexAddress.cortarAddress,
+          roadAddress: article.roadAddress || complexAddress.roadAddress,
+          complexNo, // complexNo도 주입
+        }));
+      } else {
+        // 주소 없어도 complexNo는 주입
+        response.articleList = response.articleList.map((article: any) => ({
+          ...article,
+          complexNo,
+        }));
+      }
+    }
 
     return c.json(response);
   } catch (error) {
@@ -741,6 +957,7 @@ app.get('/api/articles', async (c) => {
             latitude: typeof article.latitude === 'string' ? parseFloat(article.latitude) : article.latitude,
             longitude: typeof article.longitude === 'string' ? parseFloat(article.longitude) : article.longitude,
             cortarNo: article.cortarNo || cortarNo,
+            cortarAddress: article.cortarAddress || null,
             detailAddress: article.detailAddress,
             articleConfirmYmd: article.articleConfirmYmd,
             articleFeatureDesc: article.articleFeatureDesc,
@@ -768,6 +985,7 @@ app.get('/api/articles', async (c) => {
             latitude: typeof article.latitude === 'string' ? parseFloat(article.latitude) : article.latitude,
             longitude: typeof article.longitude === 'string' ? parseFloat(article.longitude) : article.longitude,
             cortarNo: article.cortarNo || cortarNo,
+            cortarAddress: article.cortarAddress || null,
             detailAddress: article.detailAddress,
             articleConfirmYmd: article.articleConfirmYmd,
             articleFeatureDesc: article.articleFeatureDesc,
@@ -843,9 +1061,35 @@ app.get('/api/complexes', async (c) => {
       bottomLat: centerLat - latDelta,
     });
 
-    // DB에 단지 정보 저장 (비동기)
-    if (response.complexMarkerList && Array.isArray(response.complexMarkerList)) {
-      for (const complex of response.complexMarkerList) {
+    const complexList = Array.isArray(response) ? response : (response.complexMarkerList || []);
+
+    // DB에서 기존 주소 정보 조회
+    const complexNos = complexList.map((c: any) => c.markerId);
+    const dbComplexes = await prisma.complex.findMany({
+      where: { complexNo: { in: complexNos } },
+      select: {
+        complexNo: true,
+        cortarAddress: true,
+        roadAddress: true,
+        detailAddress: true,
+      },
+    });
+
+    const dbAddressMap: Record<string, { cortarAddress: string | null; roadAddress: string | null; detailAddress: string | null }> = {};
+    for (const c of dbComplexes) {
+      dbAddressMap[c.complexNo] = {
+        cortarAddress: c.cortarAddress,
+        roadAddress: c.roadAddress,
+        detailAddress: c.detailAddress,
+      };
+    }
+
+    // DB에 단지 정보 저장 (주소가 없으면 네이버 API에서 null 아닌 값 사용)
+    if (complexList && Array.isArray(complexList)) {
+      for (const complex of complexList) {
+        const existing = dbAddressMap[complex.markerId];
+        const apiCortarAddress = complex.cortarAddress || null;
+
         await prisma.complex.upsert({
           where: { complexNo: complex.markerId },
           update: {
@@ -855,6 +1099,9 @@ app.get('/api/complexes', async (c) => {
             latitude: complex.latitude,
             longitude: complex.longitude,
             cortarNo,
+            cortarAddress: existing?.cortarAddress || apiCortarAddress, // DB값 우선, 없으면 API값
+            roadAddress: existing?.roadAddress || null,
+            detailAddress: existing?.detailAddress || null,
             completionYearMonth: complex.completionYearMonth,
             totalDongCount: complex.totalDongCount,
             totalHouseholdCount: complex.totalHouseholdCount,
@@ -875,6 +1122,9 @@ app.get('/api/complexes', async (c) => {
             latitude: complex.latitude,
             longitude: complex.longitude,
             cortarNo,
+            cortarAddress: apiCortarAddress, // API값 사용
+            roadAddress: null,
+            detailAddress: null,
             completionYearMonth: complex.completionYearMonth,
             totalDongCount: complex.totalDongCount,
             totalHouseholdCount: complex.totalHouseholdCount,
@@ -891,8 +1141,39 @@ app.get('/api/complexes', async (c) => {
       }
     }
 
+    // 주소가 없는 단지만 별도로 비동기 업데이트 (roadAddress, detailAddress)
+    setImmediate(async () => {
+      const { default: naverLandClient } = await import('../lib/scraper/naver-client');
+      const complexesWithoutFullAddress = complexList.filter((c: any) => !dbAddressMap[c.markerId]?.roadAddress);
+
+      if (complexesWithoutFullAddress.length > 0) {
+        console.log(`[Complex] Starting full address update for ${complexesWithoutFullAddress.length} complexes`);
+        for (const complex of complexesWithoutFullAddress) {
+          try {
+            const detail = await naverLandClient.getComplexDetail(complex.markerId);
+            const cortarAddress = detail?.complex?.cortarAddress || null;
+            const roadAddress = detail?.complexDetail?.roadAddress || null;
+            const detailAddress = detail?.complexDetail?.detailAddress || null;
+
+            if (cortarAddress || roadAddress || detailAddress) {
+              await prisma.complex.update({
+                where: { complexNo: complex.markerId },
+                data: {
+                  cortarAddress: cortarAddress || complex.cortarAddress || null,
+                  roadAddress,
+                  detailAddress,
+                },
+              });
+              console.log(`[Complex] ${complex.markerId} updated with full address`);
+            }
+          } catch (error) {
+            console.error(`[Complex] Failed to fetch address info for ${complex.markerId}:`, error);
+          }
+        }
+      }
+    });
+
     // 가격 정보 조회: 매물이 있는 단지들의 대표 가격 가져오기
-    const complexList = Array.isArray(response) ? response : (response.complexMarkerList || []);
     const complexesWithArticles = complexList.filter((cx: any) => cx.totalArticleCount > 0);
 
     console.log(`[Complexes] 총 ${complexList.length}개 단지, 매물 있는 단지: ${complexesWithArticles.length}개`);
@@ -951,6 +1232,82 @@ app.get('/api/complexes', async (c) => {
     return c.json(
       {
         error: error instanceof Error ? error.message : 'Failed to fetch complexes',
+      },
+      500
+    );
+  }
+});
+
+/**
+ * GET /api/complexes/:complexNo
+ * 단지 상세 조회 (DB에서)
+ */
+app.get('/api/complexes/:complexNo', async (c) => {
+  try {
+    const complexNo = c.req.param('complexNo');
+
+    const complex = await prisma.complex.findUnique({
+      where: { complexNo },
+    });
+
+    if (!complex) {
+      return c.json({ error: 'Complex not found' }, 404);
+    }
+
+    return c.json({ complex });
+  } catch (error) {
+    console.error('Complex detail fetch error:', error);
+    return c.json(
+      {
+        error: error instanceof Error ? error.message : 'Failed to fetch complex detail',
+      },
+      500
+    );
+  }
+});
+
+/**
+ * POST /api/complexes/batch-address
+ * 단지 주소 정보 일괄 조회 (DB에서)
+ * Body: { complexNos: string[] }
+ */
+app.post('/api/complexes/batch-address', async (c) => {
+  try {
+    const body = await c.req.json();
+    const { complexNos } = body;
+
+    if (!Array.isArray(complexNos) || complexNos.length === 0) {
+      return c.json({ error: 'complexNos array is required' }, 400);
+    }
+
+    const complexes = await prisma.complex.findMany({
+      where: {
+        complexNo: { in: complexNos },
+      },
+      select: {
+        complexNo: true,
+        cortarAddress: true,
+        roadAddress: true,
+        detailAddress: true,
+      },
+    });
+
+    // complexNo를 키로 하는 맵 생성
+    const addressMap: Record<string, { cortarAddress: string | null; roadAddress: string | null; detailAddress: string | null }> = {};
+    for (const complex of complexes) {
+      addressMap[complex.complexNo] = {
+        cortarAddress: complex.cortarAddress,
+        roadAddress: complex.roadAddress,
+        detailAddress: complex.detailAddress,
+      };
+    }
+
+    return c.json({ addresses: addressMap });
+  } catch (error) {
+    console.error('Batch address fetch error:', error);
+    return c.json(
+      {
+        error: error instanceof Error ? error.message : 'Failed to fetch batch addresses',
       },
       500
     );
@@ -1098,12 +1455,12 @@ app.get('/api/statistics/overview', async (c) => {
 
 /**
  * GET /api/statistics/regions
- * 지역별 매물 통계 (상위 N개)
- * @query limit - 반환할 지역 수 (기본: 10)
+ * 지역별 매물 통계
+ * @query limit - 반환할 지역 수 (선택)
  */
 app.get('/api/statistics/regions', async (c) => {
   try {
-    const limit = c.req.query('limit') ? parseInt(c.req.query('limit')!) : 10;
+    const limitParam = c.req.query('limit');
     const cortarNo = c.req.query('cortarNo');
     const realEstateType = c.req.query('realEstateType');
     const tradeType = c.req.query('tradeType');
@@ -1135,6 +1492,7 @@ app.get('/api/statistics/regions', async (c) => {
     }
 
     // 지역별 통계 집계
+    const limitClause = limitParam ? `LIMIT ${parseInt(limitParam)}` : '';
     const regionStats = await prisma.$queryRaw<Array<{
       cortarNo: string;
       cortarName: string;
@@ -1155,7 +1513,7 @@ app.get('/api/statistics/regions', async (c) => {
       GROUP BY r."cortarNo", r."cortarName"
       HAVING COUNT(p."articleNo") > 0
       ORDER BY count DESC
-      LIMIT ${limit}
+      ${limitClause}
     `;
 
     return c.json({
@@ -1882,165 +2240,7 @@ function decodeToken(token: string): { userId: string; exp: number } | null {
   }
 }
 
-/**
- * POST /api/auth/register
- * 회원가입
- */
-app.post('/api/auth/register', async (c) => {
-  try {
-    const body = await c.req.json();
-    const { email, name, password } = body;
-
-    if (!email || !password) {
-      return c.json({ error: '이메일과 비밀번호는 필수입니다.' }, 400);
-    }
-
-    // 이메일 중복 확인
-    const existingUser = await prisma.user.findUnique({
-      where: { email },
-    });
-
-    if (existingUser) {
-      return c.json({ error: '이미 존재하는 이메일입니다.' }, 400);
-    }
-
-    // 비밀번호 해시
-    const hashedPassword = await hashPassword(password);
-
-    // 사용자 생성
-    const user = await prisma.user.create({
-      data: {
-        email,
-        name,
-        password: hashedPassword,
-        provider: 'local',
-      },
-    });
-
-    // 토큰 생성
-    const token = generateToken(user.id);
-
-    return c.json({
-      success: true,
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-      },
-      token,
-    });
-  } catch (error) {
-    console.error('Register error:', error);
-    return c.json(
-      { error: error instanceof Error ? error.message : '회원가입에 실패했습니다.' },
-      500
-    );
-  }
-});
-
-/**
- * POST /api/auth/login
- * 로그인
- */
-app.post('/api/auth/login', async (c) => {
-  try {
-    const body = await c.req.json();
-    const { email, password } = body;
-
-    if (!email || !password) {
-      return c.json({ error: '이메일과 비밀번호는 필수입니다.' }, 400);
-    }
-
-    // 사용자 조회
-    const user = await prisma.user.findUnique({
-      where: { email },
-    });
-
-    if (!user) {
-      return c.json({ error: '이메일 또는 비밀번호가 올바르지 않습니다.' }, 401);
-    }
-
-    // 비밀번호 검증
-    if (!user.password) {
-      return c.json({ error: '소셜 로그인으로 가입된 계정입니다.' }, 400);
-    }
-
-    const isValid = await verifyPassword(password, user.password);
-    if (!isValid) {
-      return c.json({ error: '이메일 또는 비밀번호가 올바르지 않습니다.' }, 401);
-    }
-
-    // 마지막 로인 시간 업데이트
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { lastLoginAt: new Date() },
-    });
-
-    // 토큰 생성
-    const token = generateToken(user.id);
-
-    return c.json({
-      success: true,
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-      },
-      token,
-    });
-  } catch (error) {
-    console.error('Login error:', error);
-    return c.json(
-      { error: error instanceof Error ? error.message : '로그인에 실패했습니다.' },
-      500
-    );
-  }
-});
-
-/**
- * GET /api/auth/me
- * 현재 사용자 정보 조회
- */
-app.get('/api/auth/me', async (c) => {
-  try {
-    const authHeader = c.req.header('authorization');
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return c.json({ error: '인증되지 않았습니다.' }, 401);
-    }
-
-    const token = authHeader.substring(7);
-    const payload = decodeToken(token);
-
-    if (!payload) {
-      return c.json({ error: '유효하지 않은 토큰입니다.' }, 401);
-    }
-
-    const user = await prisma.user.findUnique({
-      where: { id: payload.userId },
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        provider: true,
-        createdAt: true,
-        themeMode: true,
-        accentColor: true,
-        fontSize: true,
-        borderRadius: true,
-        compactMode: true,
-      },
-    });
-
-    if (!user) {
-      return c.json({ error: '사용자를 찾을 수 없습니다.' }, 404);
-    }
-
-    return c.json({ user });
-  } catch (error) {
-    console.error('Auth me error:', error);
-    return c.json({ error: '사용자 정보 조회에 실패했습니다.' }, 500);
-  }
-});
+// Auth endpoints moved to src/server/auth.ts to avoid duplication
 
 /**
  * POST /api/auth/logout
@@ -2615,7 +2815,6 @@ app.get('/api/dashboard/recent-properties', async (c) => {
     const properties = await prisma.property.findMany({
       where: { createdAt: { gte: startDate } },
       orderBy: { createdAt: 'desc' },
-      take: 10,
       select: {
         articleNo: true,
         articleName: true,
@@ -2648,7 +2847,6 @@ app.get('/api/dashboard/recent-favorites', async (c) => {
     const favorites = await prisma.favoriteProperty.findMany({
       where: { userId, createdAt: { gte: startDate } },
       orderBy: { createdAt: 'desc' },
-      take: 10,
     });
 
     return c.json({ favorites });
@@ -2671,7 +2869,6 @@ app.get('/api/dashboard/recent-managed', async (c) => {
     const managed = await prisma.managedProperty.findMany({
       where: { userId, createdAt: { gte: startDate } },
       orderBy: { createdAt: 'desc' },
-      take: 10,
     });
 
     return c.json({ managed });
@@ -2694,7 +2891,6 @@ app.get('/api/dashboard/recent-contracts', async (c) => {
     const contracts = await prisma.managedProperty.findMany({
       where: { userId, contractDate: { gte: startDate } },
       orderBy: { contractDate: 'desc' },
-      take: 10,
     });
 
     return c.json({ contracts });

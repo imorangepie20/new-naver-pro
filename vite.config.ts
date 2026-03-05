@@ -15,7 +15,8 @@ export default defineConfig({
         allowedHosts: true, // 모든 호스트 허용
         proxy: {
             '/api': {
-                target: 'http://localhost:3001',
+                // 로컬 개발: localhost, 외부 접속: tplinkdns.com
+                target: process.env.API_TARGET || 'http://localhost:3001',
                 changeOrigin: true,
             },
         },

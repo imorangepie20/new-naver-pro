@@ -80,6 +80,9 @@ export interface ComplexMarker {
   totalArticleCount: number;
   existPriceTab: boolean;
   isComplexTourExist: boolean;
+  cortarAddress?: string;             // 단지 주소 (지구 주소)
+  roadAddress?: string;               // 도로명 주소
+  detailAddress?: string;             // 상세 주소
 }
 
 export interface ComplexListResponse {
@@ -126,10 +129,12 @@ export interface Article {
 
   // 위치
   cortarNo?: string;                  // 지역 코드
+  cortarAddress?: string;             // 단지 주소 (지구 주소, 예: "서울시 용산구 한강로2가")
+  roadAddress?: string;               // 도로명 주소 (예: "한강대로43길 8")
   latitude: string | number;
   longitude: string | number;
   isLocationShow: boolean;
-  detailAddress: string;
+  detailAddress: string;              // 상세 주소 (예: "2-8")
   detailAddressYn: string;            // Y, N
   virtualAddressYn: string;           // Y, N
 

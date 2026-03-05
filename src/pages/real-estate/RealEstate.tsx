@@ -466,7 +466,7 @@ const RealEstate = () => {
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
                 {/* Filter Sidebar */}
                 <div className={`${showFilter ? 'block' : 'hidden'} lg:block lg:col-span-1`}>
-                    <HudCard title="검색 조건" subtitle="필터를 설정하세요" className="sticky top-4">
+                    <HudCard title="검색 조건" subtitle="필터를 설정하세요" className="sticky">
                         <div className="space-y-6">
                             {/* 지역 선택 */}
                             <div className="space-y-2">
@@ -503,7 +503,7 @@ const RealEstate = () => {
                                             key={type.code}
                                             onClick={() => selectType(type.code)}
                                             className={`flex items-center justify-center gap-2 px-3 py-2.5 text-sm rounded-lg border transition-all duration-200 ${selectedType === type.code
-                                                ? 'bg-hud-accent-primary/20 border-hud-accent-primary text-hud-accent-primary shadow-lg shadow-hud-accent-primary/10'
+                                                ? 'border-hud-accent-primary text-hud-accent-primary'
                                                 : 'bg-hud-bg-primary border-hud-border-secondary text-hud-text-secondary hover:bg-hud-bg-hover hover:border-hud-border-primary/50'
                                                 }`}
                                         >
@@ -766,155 +766,153 @@ const RealEstate = () => {
                                         {complexes.map((complex) => {
                                             const isSelected = selectedComplexes.has(complex.markerId);
                                             return (
-                                            <div
-                                                key={complex.markerId}
-                                                onClick={() => handleComplexClick(complex)}
-                                                className={`group relative bg-hud-bg-primary border rounded-xl p-5 cursor-pointer
+                                                <div
+                                                    key={complex.markerId}
+                                                    onClick={() => handleComplexClick(complex)}
+                                                    className={`group relative bg-hud-bg-primary border rounded-xl p-5 cursor-pointer
                                                     transition-all duration-300 ease-out
                                                     hover:border-hud-accent-primary/60
                                                     hover:shadow-lg hover:shadow-hud-accent-primary/10
                                                     hover:-translate-y-1
                                                     active:scale-[0.98]
                                                     ${isSelected
-                                                        ? 'border-hud-accent-primary shadow-lg shadow-hud-accent-primary/20 ring-2 ring-hud-accent-primary/30'
-                                                        : 'border-hud-border-secondary'}`}
-                                            >
-                                                {/* 호버 시 그림자 효과 */}
-                                                <div className={`absolute inset-0 rounded-xl bg-gradient-to-br transition-all duration-300 pointer-events-none ${
-                                                    isSelected
+                                                            ? 'border-hud-accent-primary shadow-lg shadow-hud-accent-primary/20 ring-2 ring-hud-accent-primary/30'
+                                                            : 'border-hud-border-secondary'}`}
+                                                >
+                                                    {/* 호버 시 그림자 효과 */}
+                                                    <div className={`absolute inset-0 rounded-xl bg-gradient-to-br transition-all duration-300 pointer-events-none ${isSelected
                                                         ? 'from-hud-accent-primary/10 to-hud-accent-primary/5'
                                                         : 'from-hud-accent-primary/0 to-hud-accent-primary/0 group-hover:from-hud-accent-primary/5 group-hover:to-hud-accent-primary/0'
-                                                }`} />
+                                                        }`} />
 
-                                                {/* 체크박스 (좌측 상단) */}
-                                                <button
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        const newSelected = new Set(selectedComplexes);
-                                                        if (newSelected.has(complex.markerId)) {
-                                                            newSelected.delete(complex.markerId);
-                                                        } else {
-                                                            newSelected.add(complex.markerId);
-                                                        }
-                                                        setSelectedComplexes(newSelected);
-                                                    }}
-                                                    className={`absolute top-3 left-3 z-10 p-2 rounded-lg transition-all duration-200 ${
-                                                        isSelected
+                                                    {/* 체크박스 (좌측 상단) */}
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            const newSelected = new Set(selectedComplexes);
+                                                            if (newSelected.has(complex.markerId)) {
+                                                                newSelected.delete(complex.markerId);
+                                                            } else {
+                                                                newSelected.add(complex.markerId);
+                                                            }
+                                                            setSelectedComplexes(newSelected);
+                                                        }}
+                                                        className={`absolute top-3 left-3 z-10 p-2 rounded-lg transition-all duration-200 ${isSelected
                                                             ? 'bg-hud-accent-primary text-white shadow-lg shadow-hud-accent-primary/30'
                                                             : 'bg-hud-bg-secondary/90 hover:bg-hud-bg-secondary text-hud-text-muted border border-hud-border-secondary'
-                                                    }`}
-                                                    title={isSelected ? '선택 해제' : '선택'}
-                                                >
-                                                    {isSelected ? (
-                                                        <CheckSquare className="w-4 h-4" strokeWidth={3} />
-                                                    ) : (
-                                                        <Square className="w-4 h-4" strokeWidth={2} />
-                                                    )}
-                                                </button>
+                                                            }`}
+                                                        title={isSelected ? '선택 해제' : '선택'}
+                                                    >
+                                                        {isSelected ? (
+                                                            <CheckSquare className="w-4 h-4" strokeWidth={3} />
+                                                        ) : (
+                                                            <Square className="w-4 h-4" strokeWidth={2} />
+                                                        )}
+                                                    </button>
 
-                                                {/* 상단: 단지명 + 총 매물 (체크박스 공간 확보) */}
-                                                <div className="flex justify-between items-start mb-3 relative pl-10">
-                                                    <div className="flex-1 min-w-0 pr-2">
-                                                        <h3 className="text-base font-semibold text-hud-text-primary truncate group-hover:text-hud-accent-primary transition-colors">
-                                                            {complex.complexName}
-                                                        </h3>
-                                                        <p className="text-xs text-hud-text-muted mt-0.5 flex items-center gap-1">
-                                                            <Building2 size={11} />
-                                                            {complex.realEstateTypeName}
-                                                        </p>
+                                                    {/* 상단: 단지명 + 총 매물 (체크박스 공간 확보) */}
+                                                    <div className="flex justify-between items-start mb-3 relative pl-10">
+                                                        <div className="flex-1 min-w-0 pr-2">
+                                                            <h3 className="text-base font-semibold text-hud-text-primary truncate group-hover:text-hud-accent-primary transition-colors">
+                                                                {complex.complexName}
+                                                            </h3>
+                                                            <p className="text-xs text-hud-text-muted mt-0.5 flex items-center gap-1">
+                                                                <Building2 size={11} />
+                                                                {complex.realEstateTypeName}
+                                                            </p>
+                                                        </div>
+                                                        {complex.totalArticleCount !== undefined && (
+                                                            <span className="flex-shrink-0 inline-flex items-center justify-center px-2.5 py-1 text-xs font-semibold rounded-full bg-hud-accent-primary/15 text-hud-accent-primary border border-hud-accent-primary/25">
+                                                                {complex.totalArticleCount}건
+                                                            </span>
+                                                        )}
                                                     </div>
-                                                    {complex.totalArticleCount !== undefined && (
-                                                        <span className="flex-shrink-0 inline-flex items-center justify-center px-2.5 py-1 text-xs font-semibold rounded-full bg-hud-accent-primary/15 text-hud-accent-primary border border-hud-accent-primary/25">
-                                                            {complex.totalArticleCount}건
-                                                        </span>
-                                                    )}
-                                                </div>
 
-                                                {/* 가격 정보 (핵심) */}
-                                                {complex.representativePrice ? (
-                                                    <div className="mb-4 p-3 bg-hud-bg-secondary/50 rounded-lg border border-hud-border-secondary/50 group-hover:border-hud-accent-primary/30 transition-colors">
-                                                        <div className="flex items-baseline justify-between gap-2">
-                                                            <div className="flex items-center gap-2">
-                                                                <span className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded-md ${complex.representativeTradeCode === 'A1'
-                                                                    ? 'bg-hud-accent-danger/20 text-hud-accent-danger border border-hud-accent-danger/30'
-                                                                    : complex.representativeTradeCode === 'B1'
-                                                                        ? 'bg-hud-accent-success/20 text-hud-accent-success border border-hud-accent-success/30'
-                                                                        : 'bg-hud-accent-warning/20 text-hud-accent-warning border border-hud-accent-warning/30'
-                                                                    }`}>
-                                                                    {complex.representativeTrade}
+                                                    {/* 가격 정보 (핵심) */}
+                                                    {complex.representativePrice ? (
+                                                        <div className="mb-4 p-3 bg-hud-bg-secondary/50 rounded-lg border border-hud-border-secondary/50 group-hover:border-hud-accent-primary/30 transition-colors">
+                                                            <div className="flex items-baseline justify-between gap-2">
+                                                                <div className="flex items-center gap-2">
+                                                                    <span className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded-md ${complex.representativeTradeCode === 'A1'
+                                                                        ? 'bg-hud-accent-danger/20 text-hud-accent-danger border border-hud-accent-danger/30'
+                                                                        : complex.representativeTradeCode === 'B1'
+                                                                            ? 'bg-hud-accent-success/20 text-hud-accent-success border border-hud-accent-success/30'
+                                                                            : 'bg-hud-accent-warning/20 text-hud-accent-warning border border-hud-accent-warning/30'
+                                                                        }`}>
+                                                                        {complex.representativeTrade}
+                                                                    </span>
+                                                                    <span className="text-lg font-bold text-hud-accent-primary">
+                                                                        {complex.representativeTradeCode === 'B2' && complex.representativeRentPrc
+                                                                            ? `${complex.representativePrice}/${complex.representativeRentPrc}`
+                                                                            : complex.representativePrice
+                                                                        }
+                                                                    </span>
+                                                                </div>
+                                                            </div>
+                                                            {complex.representativeArea && (
+                                                                <span className="text-xs text-hud-text-muted mt-1.5 inline-flex items-center gap-1">
+                                                                    <Layers size={10} />
+                                                                    {Math.round(complex.representativeArea)}㎡ 기준
                                                                 </span>
-                                                                <span className="text-lg font-bold text-hud-accent-primary">
-                                                                    {complex.representativeTradeCode === 'B2' && complex.representativeRentPrc
-                                                                        ? `${complex.representativePrice}/${complex.representativeRentPrc}`
-                                                                        : complex.representativePrice
+                                                            )}
+                                                        </div>
+                                                    ) : (
+                                                        <div className="mb-4 p-3 bg-hud-bg-secondary/30 rounded-lg text-center border border-dashed border-hud-border-secondary">
+                                                            <span className="text-xs text-hud-text-muted">가격 정보 없음</span>
+                                                        </div>
+                                                    )}
+
+                                                    {/* 하단: 면적 · 준공 · 세대수 */}
+                                                    <div className="flex items-center justify-between text-xs pt-3 border-t border-hud-border-secondary/50">
+                                                        <div className="flex items-center gap-3 text-hud-text-muted">
+                                                            {complex.minArea && (
+                                                                <span className="flex items-center gap-1" title="면적">
+                                                                    <Layers size={11} className="text-hud-accent-info/70" />
+                                                                    {complex.minArea === complex.maxArea
+                                                                        ? `${Math.round(Number(complex.minArea))}㎡`
+                                                                        : `${Math.round(Number(complex.minArea))}~${Math.round(Number(complex.maxArea || complex.minArea))}㎡`
                                                                     }
                                                                 </span>
-                                                            </div>
+                                                            )}
+                                                            {complex.completionYearMonth && (
+                                                                <span className="flex items-center gap-1" title="준공연도">
+                                                                    <Home size={11} className="text-hud-accent-warning/70" />
+                                                                    {complex.completionYearMonth.slice(0, 4)}년
+                                                                </span>
+                                                            )}
+                                                            {complex.totalHouseholdCount && (
+                                                                <span className="flex items-center gap-1" title="세대수">
+                                                                    <Building2 size={11} className="text-hud-accent-success/70" />
+                                                                    {complex.totalHouseholdCount.toLocaleString()}세대
+                                                                </span>
+                                                            )}
                                                         </div>
-                                                        {complex.representativeArea && (
-                                                            <span className="text-xs text-hud-text-muted mt-1.5 inline-flex items-center gap-1">
-                                                                <Layers size={10} />
-                                                                {Math.round(complex.representativeArea)}㎡ 기준
-                                                            </span>
-                                                        )}
+                                                        <div className="flex items-center gap-2">
+                                                            {complex.dealCount !== undefined && complex.dealCount > 0 && (
+                                                                <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-hud-accent-danger/15 text-hud-accent-danger text-xs font-medium">
+                                                                    매{complex.dealCount}
+                                                                </span>
+                                                            )}
+                                                            {complex.leaseCount !== undefined && complex.leaseCount > 0 && (
+                                                                <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-hud-accent-success/15 text-hud-accent-success text-xs font-medium">
+                                                                    전{complex.leaseCount}
+                                                                </span>
+                                                            )}
+                                                            {complex.rentCount !== undefined && complex.rentCount > 0 && (
+                                                                <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-hud-accent-warning/15 text-hud-accent-warning text-xs font-medium">
+                                                                    월{complex.rentCount}
+                                                                </span>
+                                                            )}
+                                                        </div>
                                                     </div>
-                                                ) : (
-                                                    <div className="mb-4 p-3 bg-hud-bg-secondary/30 rounded-lg text-center border border-dashed border-hud-border-secondary">
-                                                        <span className="text-xs text-hud-text-muted">가격 정보 없음</span>
-                                                    </div>
-                                                )}
 
-                                                {/* 하단: 면적 · 준공 · 세대수 */}
-                                                <div className="flex items-center justify-between text-xs pt-3 border-t border-hud-border-secondary/50">
-                                                    <div className="flex items-center gap-3 text-hud-text-muted">
-                                                        {complex.minArea && (
-                                                            <span className="flex items-center gap-1" title="면적">
-                                                                <Layers size={11} className="text-hud-accent-info/70" />
-                                                                {complex.minArea === complex.maxArea
-                                                                    ? `${Math.round(Number(complex.minArea))}㎡`
-                                                                    : `${Math.round(Number(complex.minArea))}~${Math.round(Number(complex.maxArea || complex.minArea))}㎡`
-                                                                }
-                                                            </span>
-                                                        )}
-                                                        {complex.completionYearMonth && (
-                                                            <span className="flex items-center gap-1" title="준공연도">
-                                                                <Home size={11} className="text-hud-accent-warning/70" />
-                                                                {complex.completionYearMonth.slice(0, 4)}년
-                                                            </span>
-                                                        )}
-                                                        {complex.totalHouseholdCount && (
-                                                            <span className="flex items-center gap-1" title="세대수">
-                                                                <Building2 size={11} className="text-hud-accent-success/70" />
-                                                                {complex.totalHouseholdCount.toLocaleString()}세대
-                                                            </span>
-                                                        )}
-                                                    </div>
-                                                    <div className="flex items-center gap-2">
-                                                        {complex.dealCount !== undefined && complex.dealCount > 0 && (
-                                                            <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-hud-accent-danger/15 text-hud-accent-danger text-xs font-medium">
-                                                                매{complex.dealCount}
-                                                            </span>
-                                                        )}
-                                                        {complex.leaseCount !== undefined && complex.leaseCount > 0 && (
-                                                            <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-hud-accent-success/15 text-hud-accent-success text-xs font-medium">
-                                                                전{complex.leaseCount}
-                                                            </span>
-                                                        )}
-                                                        {complex.rentCount !== undefined && complex.rentCount > 0 && (
-                                                            <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-hud-accent-warning/15 text-hud-accent-warning text-xs font-medium">
-                                                                월{complex.rentCount}
-                                                            </span>
-                                                        )}
+                                                    {/* 화살표 아이콘 (호버 시 나타남) */}
+                                                    <div className="absolute bottom-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                                                        <div className="p-1.5 bg-hud-accent-primary/20 rounded-full">
+                                                            <MapPin size={14} className="text-hud-accent-primary" />
+                                                        </div>
                                                     </div>
                                                 </div>
-
-                                                {/* 화살표 아이콘 (호버 시 나타남) */}
-                                                <div className="absolute bottom-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-                                                    <div className="p-1.5 bg-hud-accent-primary/20 rounded-full">
-                                                        <MapPin size={14} className="text-hud-accent-primary" />
-                                                    </div>
-                                                </div>
-                                            </div>
                                             );
                                         })}
                                     </div>

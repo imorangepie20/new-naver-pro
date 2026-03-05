@@ -33,6 +33,8 @@ interface AuthState {
   register: (email: string, name: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
   checkAuth: () => Promise<void>;
+  // 인증된 fetch 함수
+  authFetch: (url: string, options?: RequestInit) => Promise<Response>;
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -145,6 +147,21 @@ export const useAuthStore = create<AuthState>()(
         } catch (error) {
           console.error('Auth check failed:', error);
         }
+      },
+
+      // 인증된 fetch 함수 (Authorization 헤더 자동 추가)
+      authFetch: async (url: string, options: RequestInit = {}) => {
+        const { token } = get();
+        const headers = new Headers(options.headers);
+
+        if (token) {
+          headers.set('Authorization', `Bearer ${token}`);
+        }
+
+        return fetch(url, {
+          ...options,
+          headers,
+        });
       },
     }),
     {

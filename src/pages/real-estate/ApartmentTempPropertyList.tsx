@@ -55,10 +55,10 @@ const ApartmentTempPropertyList = () => {
   // 유효한 complexNo (단일 또는 다중 중 첫번째)
   const effectiveComplexNo = isMultiComplexMode ? complexNos[0] : complexNo;
   const effectiveComplexName = isMultiComplexMode
-      ? complexNames.length > 1
-          ? `${complexNames[0]} 외 ${complexNames.length - 1}개`
-          : complexNames[0] || '선택한 단지'
-      : complexName;
+    ? complexNames.length > 1
+      ? `${complexNames[0]} 외 ${complexNames.length - 1}개`
+      : complexNames[0] || '선택한 단지'
+    : complexName;
 
   // 상태
   const [articles, setArticles] = useState<ArticleWithId[]>([]);
@@ -417,9 +417,18 @@ const ApartmentTempPropertyList = () => {
             case 'buildingName':
               value = article.buildingName || '';
               break;
-            case 'detailAddress':
-              value = article.detailAddress || '';
+            case 'cortarAddress':
+              value = article.cortarAddress || '';
               break;
+            case 'roadAddress': {
+              const cortar = article.cortarAddress || '';
+              const parts = cortar.split(' ');
+              const prefix = parts.length >= 2 ? parts.slice(0, -1).join(' ') + ' ' : '';
+              const road = (article as any).roadAddress || '';
+              const det = article.detailAddress ? ' ' + article.detailAddress : '';
+              value = road ? `${prefix}${road}${det}` : '';
+              break;
+            }
             case 'articleFeatureDesc':
               value = article.articleFeatureDesc || '';
               break;
@@ -582,16 +591,16 @@ const ApartmentTempPropertyList = () => {
             <div className="flex items-center gap-2 mt-1 text-sm text-hud-text-muted">
               <span>총 {articles.length}건{hasMore && '+'}</span>
               {isMultiComplexMode && complexNames.length > 1 && (
-                  <>
-                      <span>·</span>
-                      <span>{complexNames.length}개 단지 선택</span>
-                  </>
+                <>
+                  <span>·</span>
+                  <span>{complexNames.length}개 단지 선택</span>
+                </>
               )}
               {cortarName && !isMultiComplexMode && (
-                  <>
-                      <span>·</span>
-                      <span>{cortarName}</span>
-                  </>
+                <>
+                  <span>·</span>
+                  <span>{cortarName}</span>
+                </>
               )}
             </div>
           </div>
@@ -796,87 +805,87 @@ const ApartmentTempPropertyList = () => {
                       const articleComplexName = complexIndex >= 0 ? complexNames[complexIndex] : '';
 
                       return (
-                      <tr
-                        key={article.id}
-                        className={`border-b border-hud-text-muted/20 text-sm transition-all duration-150 ${selectedItems.has(article.id)
-                          ? 'bg-hud-accent-primary/15'
-                          : 'bg-hud-bg-primary hover:bg-hud-bg-hover/80'
-                          }`}
-                      >
-                        <td className="px-3 py-2 text-center">
-                          <button
-                            onClick={() => toggleSelectItem(article.id)}
-                            className="p-1.5 hover:bg-hud-bg-hover rounded-md transition-colors"
-                          >
-                            {selectedItems.has(article.id) ? (
-                              <CheckSquare className="w-4 h-4 text-hud-accent-primary" />
-                            ) : (
-                              <Square className="w-4 h-4 text-hud-text-muted" />
-                            )}
-                          </button>
-                        </td>
-                        {isMultiComplexMode && (
-                          <td className="px-3 py-2">
-                            <p className="truncate text-sm font-medium text-hud-accent-primary" title={articleComplexName}>
-                              {articleComplexName || '-'}
-                            </p>
+                        <tr
+                          key={article.id}
+                          className={`border-b border-hud-text-muted/20 text-sm transition-all duration-150 ${selectedItems.has(article.id)
+                            ? 'bg-hud-accent-primary/15'
+                            : 'bg-hud-bg-primary hover:bg-hud-bg-hover/80'
+                            }`}
+                        >
+                          <td className="px-3 py-2 text-center">
+                            <button
+                              onClick={() => toggleSelectItem(article.id)}
+                              className="p-1.5 hover:bg-hud-bg-hover rounded-md transition-colors"
+                            >
+                              {selectedItems.has(article.id) ? (
+                                <CheckSquare className="w-4 h-4 text-hud-accent-primary" />
+                              ) : (
+                                <Square className="w-4 h-4 text-hud-text-muted" />
+                              )}
+                            </button>
                           </td>
-                        )}
-                        <td className="px-3 py-2">
-                          <p className="truncate font-medium text-hud-text-primary" title={article.articleName}>
-                            {article.articleName || article.buildingName || '-'}
-                          </p>
-                          {article.buildingName && article.buildingName !== article.articleName && (
-                            <p className="text-xs text-hud-text-muted truncate mt-0.5" title={article.buildingName}>
-                              {article.buildingName}
-                            </p>
+                          {isMultiComplexMode && (
+                            <td className="px-3 py-2">
+                              <p className="truncate text-sm font-medium text-hud-accent-primary" title={articleComplexName}>
+                                {articleComplexName || '-'}
+                              </p>
+                            </td>
                           )}
-                        </td>
-                        <td className="px-3 py-2">
-                          <span className="text-xs px-2 py-1 bg-hud-bg-secondary rounded-md text-hud-text-secondary">
-                            {article.realEstateTypeName || realEstateTypeCode}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2 text-center">
-                          <span className={`inline-flex px-2 py-1 text-xs font-medium rounded-md ${article.tradeTypeCode === 'A1'
-                            ? 'bg-hud-accent-danger/20 text-hud-accent-danger border border-hud-accent-danger/30'
-                            : article.tradeTypeCode === 'B1'
-                              ? 'bg-hud-accent-success/20 text-hud-accent-success border border-hud-accent-success/30'
-                              : 'bg-hud-accent-warning/20 text-hud-accent-warning border border-hud-accent-warning/30'
-                            }`}>
-                            {article.tradeTypeName}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2 text-right font-semibold text-hud-accent-primary">
-                          {formatPrice(article.dealOrWarrantPrc)}
-                        </td>
-                        <td className="px-3 py-2 text-right text-hud-text-secondary">
-                          {article.rentPrc ? `${article.rentPrc}만` : '-'}
-                        </td>
-                        <td className="px-3 py-2 text-right text-hud-text-secondary">
-                          <span>{article.area1 || '-'}㎡</span>
-                        </td>
-                        <td className="px-3 py-2 text-center text-hud-text-secondary">
-                          {article.floorInfo || '-'}
-                        </td>
-                        <td className="px-3 py-2 text-center text-hud-text-secondary text-xs">
-                          {article.articleConfirmYmd
-                            ? article.articleConfirmYmd.replace(/(\d{4})(\d{2})(\d{2})/, '$1.$2.$3')
-                            : '-'}
-                        </td>
-                        <td className="px-3 py-2">
-                          <div className="flex flex-wrap gap-1">
-                            {article.tagList?.slice(0, 1).map((tag, idx) => (
-                              <span key={idx} className="px-1.5 py-0.5 text-xs bg-hud-bg-secondary text-hud-text-secondary rounded truncate max-w-[60px]">
-                                {tag}
-                              </span>
-                            ))}
-                            {article.tagList?.length > 1 && (
-                              <span className="text-xs text-hud-text-muted">+{article.tagList.length - 1}</span>
+                          <td className="px-3 py-2">
+                            <p className="truncate font-medium text-hud-text-primary" title={article.articleName}>
+                              {article.articleName || article.buildingName || '-'}
+                            </p>
+                            {article.buildingName && article.buildingName !== article.articleName && (
+                              <p className="text-xs text-hud-text-muted truncate mt-0.5" title={article.buildingName}>
+                                {article.buildingName}
+                              </p>
                             )}
-                          </div>
-                        </td>
-                      </tr>
+                          </td>
+                          <td className="px-3 py-2">
+                            <span className="text-xs px-2 py-1 bg-hud-bg-secondary rounded-md text-hud-text-secondary">
+                              {article.realEstateTypeName || realEstateTypeCode}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2 text-center">
+                            <span className={`inline-flex px-2 py-1 text-xs font-medium rounded-md ${article.tradeTypeCode === 'A1'
+                              ? 'bg-hud-accent-danger/20 text-hud-accent-danger border border-hud-accent-danger/30'
+                              : article.tradeTypeCode === 'B1'
+                                ? 'bg-hud-accent-success/20 text-hud-accent-success border border-hud-accent-success/30'
+                                : 'bg-hud-accent-warning/20 text-hud-accent-warning border border-hud-accent-warning/30'
+                              }`}>
+                              {article.tradeTypeName}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2 text-right font-semibold text-hud-accent-primary">
+                            {formatPrice(article.dealOrWarrantPrc)}
+                          </td>
+                          <td className="px-3 py-2 text-right text-hud-text-secondary">
+                            {article.rentPrc ? `${article.rentPrc}만` : '-'}
+                          </td>
+                          <td className="px-3 py-2 text-right text-hud-text-secondary">
+                            <span>{article.area1 || '-'}㎡</span>
+                          </td>
+                          <td className="px-3 py-2 text-center text-hud-text-secondary">
+                            {article.floorInfo || '-'}
+                          </td>
+                          <td className="px-3 py-2 text-center text-hud-text-secondary text-xs">
+                            {article.articleConfirmYmd
+                              ? article.articleConfirmYmd.replace(/(\d{4})(\d{2})(\d{2})/, '$1.$2.$3')
+                              : '-'}
+                          </td>
+                          <td className="px-3 py-2">
+                            <div className="flex flex-wrap gap-1">
+                              {article.tagList?.slice(0, 1).map((tag, idx) => (
+                                <span key={idx} className="px-1.5 py-0.5 text-xs bg-hud-bg-secondary text-hud-text-secondary rounded truncate max-w-[60px]">
+                                  {tag}
+                                </span>
+                              ))}
+                              {article.tagList?.length > 1 && (
+                                <span className="text-xs text-hud-text-muted">+{article.tagList.length - 1}</span>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
                       );
                     })}
                   </tbody>

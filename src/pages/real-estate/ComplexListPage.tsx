@@ -119,7 +119,30 @@ const ComplexListPage: React.FC<ComplexListPageProps> = ({ propertyType = 'APT' 
 
       const data = await response.json();
       if (data.complexMarkerList) {
-        setComplexes(data.complexMarkerList);
+        // DB에서 주소 정보 가져오기 (단지번호 목록으로 일괄 조회)
+        const complexNos = data.complexMarkerList.map((c: ComplexMarker) => c.markerId);
+        const addressResponse = await fetch(`${API_BASE}/api/complexes/batch-address`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ complexNos }),
+        });
+
+        let addressMap: Record<string, { cortarAddress: string | null; roadAddress: string | null; detailAddress: string | null }> = {};
+
+        if (addressResponse.ok) {
+          const addressData = await addressResponse.json();
+          addressMap = addressData.addresses || {};
+        }
+
+        // 네이버 API 데이터 + DB 주소 정보 병합
+        const enrichedComplexes = data.complexMarkerList.map((c: ComplexMarker) => ({
+          ...c,
+          cortarAddress: addressMap[c.markerId]?.cortarAddress || undefined,
+          roadAddress: addressMap[c.markerId]?.roadAddress || undefined,
+          detailAddress: addressMap[c.markerId]?.detailAddress || undefined,
+        }));
+
+        setComplexes(enrichedComplexes);
       } else {
         setComplexes([]);
       }
@@ -336,7 +359,16 @@ const ComplexListPage: React.FC<ComplexListPageProps> = ({ propertyType = 'APT' 
                     className="cursor-pointer hover:border-hud-accent-primary transition-colors rounded-lg p-4 bg-hud-bg-primary border border-hud-border-secondary"
                   >
                     <h3 className="font-semibold text-hud-text-primary mb-2">{complex.complexName}</h3>
-                    <p className="text-sm text-hud-text-secondary">{complex.totalHouseholdCount}세대</p>
+                    <p className="text-sm text-hud-text-secondary">
+                      {complex.cortarAddress || complex.totalHouseholdCount ? (
+                        <>
+                          {complex.cortarAddress && <span className="block truncate" title={complex.cortarAddress}>{complex.cortarAddress}</span>}
+                          {complex.totalHouseholdCount && <span>{complex.totalHouseholdCount}세대</span>}
+                        </>
+                      ) : (
+                        '-'
+                      )}
+                    </p>
                   </div>
                 ))}
               </div>

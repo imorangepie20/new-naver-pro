@@ -41,6 +41,7 @@ model User {
   compactMode   Boolean   @default(false)      /// 컴팩트 모드 여부
 
   // 관계 - 사용자 개인 데이터
+  properties       Property[]                  /// 사용자 매물 목록
   savedProperties  SavedProperty[]             /// 저장한 매물 목록
   searchConditions SearchCondition[]           /// 저장한 검색 조건
   priceAlerts      PriceAlert[]                /// 가격 알림
@@ -235,6 +236,9 @@ model Complex {
   latitude              Float                                  /// 위도
   longitude             Float                                  /// 경도
   cortarNo              String                                 /// 지역 코드
+  cortarAddress         String?                                /// 단지 주소 (지구 주소, 예: "서울시 용산구 한강로2가")
+  roadAddress           String?                                /// 도로명 주소 (예: "한강대로43길 8")
+  detailAddress         String?                                /// 상세 주소 (예: "2-8")
 
   // 단지 정보
   completionYearMonth   String?                                /// 준공년월 (YYYYMM)
@@ -304,7 +308,9 @@ model Property {
   latitude              Float?                                 /// 위도
   longitude             Float?                                 /// 경도
   cortarNo              String                                 /// 지역 코드
-  detailAddress         String?                                /// 상세 주소
+  cortarAddress         String?                                /// 단지 주소 (지구 주소, 예: "서울시 용산구 한강로2가")
+  roadAddress           String?                                /// 도로명 주소 (예: "한강대로43길 8")
+  detailAddress         String?                                /// 상세 주소 (동/호수)
 
   // 기타 정보
   articleConfirmYmd     String?                                /// 매물 확정일 (YYYYMMDD)
@@ -328,6 +334,9 @@ model Property {
   // 단지 정보 (아파트/오피스텔만 해당)
   complexNo             String?                                /// 소속 단지 번호
 
+  // 사용자 소유
+  userId                String?                                /// 소유 사용자 ID (null이면 공용)
+
   // 데이터 소스 구분
   dataSource            String   @default("NAVER")             /// 데이터 소스 (NAVER: 네이버 크롤링, UPLOAD: 파일 업로드)
 
@@ -339,6 +348,7 @@ model Property {
   updatedAt             DateTime @updatedAt                    /// 정보 수정 일시
 
   priceHistories        PriceHistory[]                         /// 가격 이력
+  user                  User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([cortarNo])
   @@index([realEstateTypeCode])
@@ -347,6 +357,7 @@ model Property {
   @@index([latitude, longitude])
   @@index([cacheExpiresAt])
   @@index([dataSource])
+  @@index([userId])
   @@map("properties")
 }
 

@@ -20,7 +20,8 @@ export const EXPORT_FIELDS = [
   { key: 'direction', label: '방향', default: false },
   { key: 'articleConfirmYmd', label: '확정일', default: true },
   { key: 'buildingName', label: '건물명', default: false },
-  { key: 'detailAddress', label: '주소', default: true },
+  { key: 'cortarAddress', label: '법정동주소', default: true },
+  { key: 'roadAddress', label: '도로명주소', default: true },
   { key: 'articleFeatureDesc', label: '매물설명', default: false },
   { key: 'tagList', label: '태그', default: false },
   { key: 'cpName', label: '중개업소', default: true },
@@ -139,19 +140,17 @@ const ExcelExportModal: React.FC<ExcelExportModalProps> = ({
                 onClick={() => toggleField(field.key)}
                 className={`
                   flex items-center gap-2 p-3 rounded-lg border transition-all text-left
-                  ${
-                    selectedFields.has(field.key)
-                      ? 'bg-hud-accent-primary/10 border-hud-accent-primary text-hud-text-primary'
-                      : 'bg-hud-bg-secondary border-hud-border-secondary text-hud-text-secondary hover:bg-hud-bg-hover'
+                  ${selectedFields.has(field.key)
+                    ? 'bg-hud-accent-primary/10 border-hud-accent-primary text-hud-text-primary'
+                    : 'bg-hud-bg-secondary border-hud-border-secondary text-hud-text-secondary hover:bg-hud-bg-hover'
                   }
                 `}
               >
                 <div className={`
                   w-5 h-5 rounded border flex items-center justify-center flex-shrink-0
-                  ${
-                    selectedFields.has(field.key)
-                      ? 'bg-hud-accent-primary border-hud-accent-primary'
-                      : 'border-hud-border-secondary'
+                  ${selectedFields.has(field.key)
+                    ? 'bg-hud-accent-primary border-hud-accent-primary'
+                    : 'border-hud-border-secondary'
                   }
                 `}>
                   {selectedFields.has(field.key) && (
