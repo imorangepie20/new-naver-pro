@@ -8,11 +8,10 @@ import { cors } from 'hono/cors';
 import prisma from '../lib/db/prisma';
 import tokenManager from '../lib/scraper/token-manager';
 import authRouter, { getUserIdFromRequest } from './auth';
+import { fetchRebTables, fetchRebTableItems, fetchRebTableData, getRebApiConfigStatus } from '../lib/public-data/reb-client';
+import { fetchMolitCategoryRows, getMolitApiConfigStatus, type MolitCategory } from '../lib/public-data/molit-client';
 
 const app = new Hono();
-
-// 인증 라우터 연결
-app.route('/api/auth', authRouter);
 
 // CORS 설정
 app.use('/*', cors({
@@ -44,9 +43,254 @@ app.use('/*', cors({
   credentials: true,
 }));
 
+// 인증 라우터 연결
+app.route('/api/auth', authRouter);
+
 // 헬스 체크
 app.get('/api/health', (c) => {
   return c.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// ============================================
+// 공공데이터(REB) API
+// ============================================
+
+function normalizeRebParam(raw: string | undefined | null) {
+  if (!raw) return '';
+  return raw.trim();
+}
+
+function normalizeRebStatblId(raw: string | undefined | null) {
+  // 입력 오타(예: 끝에 '_' 추가)로 인한 무의미한 0건 응답을 줄이기 위해
+  // 우측 underscore는 제거해서 처리한다.
+  const normalized = normalizeRebParam(raw);
+  return normalized.replace(/_+$/g, '');
+}
+
+const REB_DEBUG_ENABLED = /^(1|true|yes|on)$/i.test(process.env.REB_DEBUG || '');
+
+function rebDebugLog(message: string, payload?: unknown) {
+  if (!REB_DEBUG_ENABLED) return;
+  if (payload === undefined) {
+    console.log(`[REB DEBUG] ${message}`);
+    return;
+  }
+  console.log(`[REB DEBUG] ${message}`, payload);
+}
+
+/**
+ * GET /api/public/reb/tables
+ * 한국부동산원 통계표 목록 조회
+ * @query statblId - 통계표 ID 필터(선택)
+ * @query page - 페이지 (기본 1)
+ * @query size - 페이지 크기 (기본 100, 최대 1000)
+ * @query type - 응답 타입(json|xml, 기본 json)
+ */
+app.get('/api/public/reb/tables', async (c) => {
+  try {
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
+
+    const statblId = normalizeRebStatblId(c.req.query('statblId'));
+    const page = parseInt(c.req.query('page') || '1');
+    const size = parseInt(c.req.query('size') || '100');
+    const type = c.req.query('type') === 'xml' ? 'xml' : 'json';
+
+    const result = await fetchRebTables({
+      statblId,
+      page,
+      size,
+      type,
+    });
+
+    return c.json({
+      success: true,
+      rows: result.rows,
+      resultCode: result.resultCode,
+      resultMessage: result.resultMessage,
+      arrayField: result.arrayField,
+      count: result.rows.length,
+    });
+  } catch (error) {
+    console.error('REB tables fetch error:', error);
+    return c.json(
+      {
+        error: error instanceof Error ? error.message : 'Failed to fetch REB tables',
+      },
+      500
+    );
+  }
+});
+
+/**
+ * GET /api/public/reb/table-items
+ * 한국부동산원 통계표 세부항목 조회
+ * @query statblId - 통계표 ID(필수)
+ * @query itmTag - 항목정보(선택)
+ * @query page - 페이지 (기본 1)
+ * @query size - 페이지 크기 (기본 100, 최대 1000)
+ * @query type - 응답 타입(json|xml, 기본 json)
+ */
+app.get('/api/public/reb/table-items', async (c) => {
+  try {
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
+
+    const statblId = normalizeRebStatblId(c.req.query('statblId'));
+    if (!statblId) {
+      return c.json({ error: 'statblId is required' }, 400);
+    }
+
+    const itmTag = normalizeRebParam(c.req.query('itmTag')) || undefined;
+    const page = parseInt(c.req.query('page') || '1');
+    const size = parseInt(c.req.query('size') || '100');
+    const type = c.req.query('type') === 'xml' ? 'xml' : 'json';
+
+    const result = await fetchRebTableItems({
+      statblId,
+      itmTag,
+      page,
+      size,
+      type,
+    });
+
+    return c.json({
+      success: true,
+      rows: result.rows,
+      resultCode: result.resultCode,
+      resultMessage: result.resultMessage,
+      arrayField: result.arrayField,
+      count: result.rows.length,
+    });
+  } catch (error) {
+    console.error('REB table items fetch error:', error);
+    return c.json(
+      {
+        error: error instanceof Error ? error.message : 'Failed to fetch REB table items',
+      },
+      500
+    );
+  }
+});
+
+/**
+ * GET /api/public/reb/table-data
+ * 한국부동산원 통계표 데이터 조회
+ * @query statblId - 통계표 ID(필수)
+ * @query dtacycleCd - 주기 코드(선택)
+ * @query wrttimeIdtfrId - 시점 식별자(선택)
+ * @query itmId - 항목 ID(선택)
+ * @query clsId - 분류 ID(선택)
+ * @query page - 페이지 (기본 1)
+ * @query size - 페이지 크기 (기본 100, 최대 1000)
+ * @query type - 응답 타입(json|xml, 기본 json)
+ * @description 나머지 query 파라미터는 REB 원본 파라미터로 그대로 전달
+ */
+app.get('/api/public/reb/table-data', async (c) => {
+  try {
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
+
+    const statblId = normalizeRebStatblId(c.req.query('statblId'));
+    if (!statblId) {
+      return c.json({ error: 'statblId is required' }, 400);
+    }
+
+    const page = parseInt(c.req.query('page') || '1');
+    const size = parseInt(c.req.query('size') || '100');
+    const type = c.req.query('type') === 'xml' ? 'xml' : 'json';
+
+    const paramAliasMap: Record<string, string> = {
+      statblId: 'STATBL_ID',
+      dtacycleCd: 'DTACYCLE_CD',
+      wrttimeIdtfrId: 'WRTTIME_IDTFR_ID',
+      itmId: 'ITM_ID',
+      itmTag: 'ITM_TAG',
+      clsId: 'CLS_ID',
+    };
+
+    const reservedKeys = new Set(['page', 'size', 'type']);
+    const searchParams = new URL(c.req.url).searchParams;
+    const filters: Record<string, string> = {};
+
+    for (const [queryKey, queryValue] of searchParams.entries()) {
+      if (reservedKeys.has(queryKey)) continue;
+      const value = queryValue.trim();
+      if (!value) continue;
+
+      const mappedKey = paramAliasMap[queryKey] ?? queryKey;
+      // 기본 파라미터는 상단 필드에서 처리하므로 제외
+      if (mappedKey === 'STATBL_ID') continue;
+      filters[mappedKey] = value;
+    }
+
+    const result = await fetchRebTableData({
+      statblId,
+      dtacycleCd: normalizeRebParam(c.req.query('dtacycleCd')) || undefined,
+      wrttimeIdtfrId: normalizeRebParam(c.req.query('wrttimeIdtfrId')) || undefined,
+      itmId: normalizeRebParam(c.req.query('itmId')) || undefined,
+      itmTag: normalizeRebParam(c.req.query('itmTag')) || undefined,
+      clsId: normalizeRebParam(c.req.query('clsId')) || undefined,
+      page,
+      size,
+      type,
+      filters,
+    });
+
+    rebDebugLog('table-data result', {
+      statblId,
+      dtacycleCd: normalizeRebParam(c.req.query('dtacycleCd')) || undefined,
+      itmId: normalizeRebParam(c.req.query('itmId')) || undefined,
+      itmTag: normalizeRebParam(c.req.query('itmTag')) || undefined,
+      clsId: normalizeRebParam(c.req.query('clsId')) || undefined,
+      count: result.rows.length,
+      resultCode: result.resultCode,
+      resultMessage: result.resultMessage,
+      serviceName: result.serviceName,
+    });
+
+    if (typeof result.resultCode === 'string' && /^ERROR/i.test(result.resultCode)) {
+      return c.json(
+        {
+          success: false,
+          rows: result.rows,
+          resultCode: result.resultCode,
+          resultMessage: result.resultMessage,
+          arrayField: result.arrayField,
+          listTotalCount: result.listTotalCount,
+          serviceName: result.serviceName,
+          count: result.rows.length,
+          error: `REB API 오류 (${result.resultCode}): ${result.resultMessage || '요청인자를 확인하세요.'}`,
+        },
+        502
+      );
+    }
+
+    return c.json({
+      success: true,
+      rows: result.rows,
+      resultCode: result.resultCode,
+      resultMessage: result.resultMessage,
+      arrayField: result.arrayField,
+      listTotalCount: result.listTotalCount,
+      serviceName: result.serviceName,
+      count: result.rows.length,
+    });
+  } catch (error) {
+    console.error('REB table data fetch error:', error);
+    return c.json(
+      {
+        error: error instanceof Error ? error.message : 'Failed to fetch REB table data',
+      },
+      500
+    );
+  }
 });
 
 // ============================================
@@ -547,6 +791,53 @@ app.post('/api/properties/backfill-addresses', async (c) => {
 });
 
 /**
+ * POST /api/properties/backfill-user
+ * userId가 없는 기존 매물을 현재 로그인 사용자에게 귀속
+ * Body: { dataSource?: 'UPLOAD' | 'NAVER' | 'ALL' }
+ */
+app.post('/api/properties/backfill-user', async (c) => {
+  try {
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
+
+    let body: any = {};
+    try {
+      body = await c.req.json();
+    } catch {
+      body = {};
+    }
+
+    const dataSource = body.dataSource || c.req.query('dataSource') || 'UPLOAD';
+    const where: any = { userId: null };
+    if (dataSource !== 'ALL') {
+      where.dataSource = dataSource;
+    }
+
+    const result = await prisma.property.updateMany({
+      where,
+      data: { userId },
+    });
+
+    return c.json({
+      success: true,
+      updatedCount: result.count,
+      assignedUserId: userId,
+      dataSource,
+    });
+  } catch (error) {
+    console.error('Backfill user error:', error);
+    return c.json(
+      {
+        error: error instanceof Error ? error.message : 'Failed to backfill user ownership',
+      },
+      500
+    );
+  }
+});
+
+/**
  * GET /api/properties
  * 중앙 DB 매물 목록 조회 (사용자별 필터링)
  * @query dataSource - NAVER(네이버), UPLOAD(파일업로드), ALL(전체)
@@ -613,7 +904,7 @@ app.get('/api/properties', async (c) => {
         page,
         limit,
         total: totalCount,
-        totalPages: Math.ceil(totalCount / limit),
+        totalPages: limit ? Math.ceil(totalCount / limit) : 1,
       },
     });
   } catch (error) {
@@ -1710,6 +2001,1661 @@ app.get('/api/statistics/price-trend', async (c) => {
   }
 });
 
+/**
+ * GET /api/statistics/address-suggestions
+ * 주소/단지명 기반 좌표 후보 조회 (자동완성)
+ * @query q - 검색어 (2글자 이상)
+ * @query limit - 최대 개수 (기본 12, 최대 30)
+ */
+app.get('/api/statistics/address-suggestions', async (c) => {
+  try {
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
+
+    const q = (c.req.query('q') || '').trim();
+    if (q.length < 2) {
+      return c.json({ suggestions: [] });
+    }
+
+    const limitRaw = parseInt(c.req.query('limit') || '12');
+    const limit = Number.isNaN(limitRaw) ? 12 : Math.min(30, Math.max(1, limitRaw));
+
+    const [propertyMatches, complexMatches] = await Promise.all([
+      prisma.property.findMany({
+        where: {
+          userId,
+          latitude: { not: null },
+          longitude: { not: null },
+          OR: [
+            { buildingName: { contains: q, mode: 'insensitive' } },
+            { cortarAddress: { contains: q, mode: 'insensitive' } },
+            { roadAddress: { contains: q, mode: 'insensitive' } },
+            { detailAddress: { contains: q, mode: 'insensitive' } },
+          ],
+        },
+        select: {
+          buildingName: true,
+          cortarAddress: true,
+          roadAddress: true,
+          detailAddress: true,
+          latitude: true,
+          longitude: true,
+        },
+        take: 80,
+        orderBy: { createdAt: 'desc' },
+      }),
+      prisma.complex.findMany({
+        where: {
+          OR: [
+            { complexName: { contains: q, mode: 'insensitive' } },
+            { cortarAddress: { contains: q, mode: 'insensitive' } },
+            { roadAddress: { contains: q, mode: 'insensitive' } },
+            { detailAddress: { contains: q, mode: 'insensitive' } },
+          ],
+        },
+        select: {
+          complexName: true,
+          cortarAddress: true,
+          roadAddress: true,
+          detailAddress: true,
+          latitude: true,
+          longitude: true,
+        },
+        take: 80,
+        orderBy: { updatedAt: 'desc' },
+      }),
+    ]);
+
+    type Suggestion = {
+      label: string;
+      latitude: number;
+      longitude: number;
+      source: 'property' | 'complex';
+    };
+
+    const combined: Suggestion[] = [];
+
+    for (const p of propertyMatches) {
+      const lat = p.latitude ?? null;
+      const lng = p.longitude ?? null;
+      if (lat === null || lng === null) continue;
+
+      const addressParts = [p.cortarAddress, p.roadAddress, p.detailAddress]
+        .filter(Boolean)
+        .join(' ');
+      const label = [p.buildingName, addressParts].filter(Boolean).join(' | ').trim();
+      if (!label) continue;
+
+      combined.push({
+        label,
+        latitude: lat,
+        longitude: lng,
+        source: 'property',
+      });
+    }
+
+    for (const cpx of complexMatches) {
+      const addressParts = [cpx.cortarAddress, cpx.roadAddress, cpx.detailAddress]
+        .filter(Boolean)
+        .join(' ');
+      const label = [cpx.complexName, addressParts].filter(Boolean).join(' | ').trim();
+      if (!label) continue;
+
+      combined.push({
+        label,
+        latitude: cpx.latitude,
+        longitude: cpx.longitude,
+        source: 'complex',
+      });
+    }
+
+    const dedupMap = new Map<string, Suggestion>();
+    for (const item of combined) {
+      const key = `${item.label}__${item.latitude.toFixed(6)}__${item.longitude.toFixed(6)}`;
+      if (!dedupMap.has(key)) {
+        dedupMap.set(key, item);
+      }
+    }
+
+    const suggestions = Array.from(dedupMap.values()).slice(0, limit);
+    return c.json({ suggestions });
+  } catch (error) {
+    console.error('Address suggestions error:', error);
+    return c.json(
+      {
+        error: error instanceof Error ? error.message : 'Failed to fetch address suggestions',
+      },
+      500
+    );
+  }
+});
+
+/**
+ * GET /api/statistics/office-center
+ * 로그인 사용자(부동산 사무실) 기준 지도 초기 중심점 조회
+ */
+app.get('/api/statistics/office-center', async (c) => {
+  try {
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        companyName: true,
+        address: true,
+        detailAddress: true,
+      },
+    });
+
+    if (!user) {
+      return c.json({ error: '사용자 정보를 찾을 수 없습니다.' }, 404);
+    }
+
+    const baseAddress = (user.address || '').trim();
+    const detailAddress = (user.detailAddress || '').trim();
+    const officeAddress = [baseAddress, detailAddress].filter(Boolean).join(' ').trim();
+    const addressQueries = Array.from(
+      new Set([baseAddress, officeAddress].filter((v): v is string => !!v && v.length >= 2))
+    );
+    let centerLat: number | null = null;
+    let centerLng: number | null = null;
+    let source: 'office-address-geocode-rest' | 'office-address-geocode-failed' = 'office-address-geocode-failed';
+    let matchedCount = 0;
+    let geocodeMessage: string | null = null;
+    let geocodeQueryUsed: string | null = null;
+    const kakaoRestApiKey = (
+      process.env.KAKAO_REST_API_KEY ||
+      process.env.KAKAO_LOCAL_REST_API_KEY ||
+      process.env.KAKAO_MAP_REST_API_KEY ||
+      ''
+    ).trim();
+
+    const sanitizeAddress = (value: string) =>
+      value
+        .replace(/\([^)]*\)/g, ' ')
+        .replace(/\b\d{1,3}(층|호|동)\b/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    const buildAddressCandidates = (base: string, full: string) => {
+      const candidates = new Set<string>();
+      const pushIfValid = (v: string) => {
+        const trimmed = v.trim();
+        if (trimmed.length >= 5) candidates.add(trimmed);
+      };
+
+      pushIfValid(base);
+      pushIfValid(full);
+      pushIfValid(sanitizeAddress(base));
+      pushIfValid(sanitizeAddress(full));
+
+      const baseTokens = sanitizeAddress(base).split(' ').filter((token) => token.length > 1);
+      if (baseTokens.length >= 3) {
+        pushIfValid(baseTokens.slice(0, 3).join(' '));
+        pushIfValid(baseTokens.slice(0, 4).join(' '));
+      }
+
+      return Array.from(candidates);
+    };
+
+    const parseKakaoPoint = (doc?: { x?: string; y?: string } | null) => {
+      if (!doc?.x || !doc?.y) return null;
+      const latitude = Number(doc.y);
+      const longitude = Number(doc.x);
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+      return { latitude, longitude };
+    };
+
+    const geocodeByKakaoRest = async (query: string) => {
+      const request = async (url: string) => {
+        const response = await fetch(url, {
+          headers: {
+            Authorization: `KakaoAK ${kakaoRestApiKey}`,
+          },
+        });
+
+        if (!response.ok) {
+          const body = await response.text();
+          console.warn('[OfficeCenter] Kakao REST geocode failed:', response.status, body.slice(0, 200));
+          return null;
+        }
+
+        const payload = await response.json() as {
+          documents?: Array<{ x?: string; y?: string }>;
+        };
+        return parseKakaoPoint(payload.documents?.[0]);
+      };
+
+      const addressUrl = `https://dapi.kakao.com/v2/local/search/address.json?query=${encodeURIComponent(query)}&page=1&size=1`;
+      const byAddress = await request(addressUrl);
+      if (byAddress) return byAddress;
+
+      const keywordUrl = `https://dapi.kakao.com/v2/local/search/keyword.json?query=${encodeURIComponent(query)}&page=1&size=1`;
+      return request(keywordUrl);
+    };
+
+    // 1) 카카오 REST API로 사무실 주소 좌표 변환
+    if (addressQueries.length > 0) {
+      if (!kakaoRestApiKey) {
+        console.warn('[OfficeCenter] KAKAO_REST_API_KEY is missing. Skip REST geocode.');
+      } else {
+        const candidates = buildAddressCandidates(baseAddress, officeAddress);
+        for (const query of candidates) {
+          const point = await geocodeByKakaoRest(query);
+          if (point) {
+            centerLat = point.latitude;
+            centerLng = point.longitude;
+            source = 'office-address-geocode-rest';
+            matchedCount = 1;
+            geocodeQueryUsed = query;
+            break;
+          }
+        }
+      }
+    }
+
+    if (!baseAddress) {
+      return c.json(
+        {
+          error: '사무실 기본 주소가 없습니다. 프로필에서 주소를 먼저 저장하세요.',
+          source: 'office-address-geocode-failed',
+        },
+        422
+      );
+    }
+
+    if (centerLat === null || centerLng === null) {
+      geocodeMessage = kakaoRestApiKey
+        ? '사무실 주소 좌표 변환 실패(REST 결과 없음)'
+        : 'KAKAO_REST_API_KEY 미설정으로 사무실 주소 좌표 변환 불가';
+
+      return c.json(
+        {
+          error: geocodeMessage,
+          source: 'office-address-geocode-failed',
+          geocodeMessage,
+          geocodeQueryUsed,
+          office: {
+            companyName: user.companyName || null,
+            baseAddress: baseAddress || null,
+            detailAddress: detailAddress || null,
+            address: officeAddress || null,
+          },
+        },
+        422
+      );
+    }
+
+    return c.json({
+      center: {
+        latitude: centerLat,
+        longitude: centerLng,
+      },
+      source,
+      matchedCount,
+      geocodeMessage,
+      geocodeQueryUsed,
+      office: {
+        companyName: user.companyName || null,
+        baseAddress: baseAddress || null,
+        detailAddress: detailAddress || null,
+        address: officeAddress || null,
+      },
+    });
+  } catch (error) {
+    console.error('Office center error:', error);
+    return c.json(
+      {
+        error: error instanceof Error ? error.message : 'Failed to fetch office center',
+      },
+      500
+    );
+  }
+});
+
+/**
+ * GET /api/statistics/address-market
+ * 주소/좌표 기준 반경 내 시세 및 거래 통계
+ * @query address - 주소/단지 텍스트(선택, 좌표 미입력 시 중심점 추정용)
+ * @query lat - 중심 위도
+ * @query lng - 중심 경도
+ * @query radiusMeters - 반경(미터, 기본 1000)
+ * @query realEstateType - 매물 유형 코드(선택)
+ * @query tradeType - 거래 유형 코드(선택)
+ */
+app.get('/api/statistics/address-market', async (c) => {
+  try {
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
+
+    const address = (c.req.query('address') || '').trim();
+    const latRaw = parseFloat(c.req.query('lat') || '');
+    const lngRaw = parseFloat(c.req.query('lng') || '');
+    const realEstateType = (c.req.query('realEstateType') || '').trim();
+    const tradeType = (c.req.query('tradeType') || '').trim();
+    const sourceRaw = (c.req.query('source') || 'molit').trim().toLowerCase();
+    const source: 'auto' | 'molit' | 'reb' | 'local' =
+      sourceRaw === 'molit' || sourceRaw === 'reb' || sourceRaw === 'local'
+        ? sourceRaw
+        : 'auto';
+    const monthsBackRaw = parseInt(c.req.query('monthsBack') || '2', 10);
+    const molitMonthsBack = Number.isFinite(monthsBackRaw) ? Math.min(11, Math.max(0, monthsBackRaw)) : 2;
+    const molitPageRowsRaw = parseInt(c.req.query('molitRows') || '1000', 10);
+    const molitRows = Number.isFinite(molitPageRowsRaw) ? Math.min(1000, Math.max(100, molitPageRowsRaw)) : 1000;
+    const molitPagesRaw = parseInt(c.req.query('molitPages') || '2', 10);
+    const molitPages = Number.isFinite(molitPagesRaw) ? Math.min(5, Math.max(1, molitPagesRaw)) : 2;
+
+    const radiusRaw = parseInt(c.req.query('radiusMeters') || '1000');
+    const radiusMeters = Number.isNaN(radiusRaw) ? 1000 : Math.min(10000, Math.max(200, radiusRaw));
+
+    const toMedian = (values: number[]) => {
+      if (values.length === 0) return 0;
+      const sorted = [...values].sort((a, b) => a - b);
+      const mid = Math.floor(sorted.length / 2);
+      if (sorted.length % 2 === 0) {
+        return Math.round((sorted[mid - 1] + sorted[mid]) / 2);
+      }
+      return sorted[mid];
+    };
+
+    let centerLat = Number.isFinite(latRaw) ? latRaw : null;
+    let centerLng = Number.isFinite(lngRaw) ? lngRaw : null;
+    let centerSource: 'query' | 'address' = 'query';
+
+    if (centerLat === null || centerLng === null) {
+      if (!address) {
+        return c.json({ error: 'lat/lng 또는 address 중 하나는 필요합니다.' }, 400);
+      }
+
+      const [propCandidates, complexCandidates] = await Promise.all([
+        prisma.property.findMany({
+          where: {
+            userId,
+            latitude: { not: null },
+            longitude: { not: null },
+            OR: [
+              { buildingName: { contains: address, mode: 'insensitive' } },
+              { cortarAddress: { contains: address, mode: 'insensitive' } },
+              { roadAddress: { contains: address, mode: 'insensitive' } },
+              { detailAddress: { contains: address, mode: 'insensitive' } },
+            ],
+          },
+          select: { latitude: true, longitude: true },
+          take: 60,
+        }),
+        prisma.complex.findMany({
+          where: {
+            OR: [
+              { complexName: { contains: address, mode: 'insensitive' } },
+              { cortarAddress: { contains: address, mode: 'insensitive' } },
+              { roadAddress: { contains: address, mode: 'insensitive' } },
+              { detailAddress: { contains: address, mode: 'insensitive' } },
+            ],
+          },
+          select: { latitude: true, longitude: true },
+          take: 60,
+        }),
+      ]);
+
+      const points = [
+        ...propCandidates.map((p) => ({ lat: p.latitude, lng: p.longitude })),
+        ...complexCandidates.map((x) => ({ lat: x.latitude, lng: x.longitude })),
+      ].filter((v): v is { lat: number; lng: number } => v.lat !== null && v.lng !== null);
+
+      if (points.length === 0) {
+        return c.json({ error: '입력한 주소로 중심 좌표를 찾지 못했습니다.' }, 404);
+      }
+
+      centerLat = points.reduce((sum, p) => sum + p.lat, 0) / points.length;
+      centerLng = points.reduce((sum, p) => sum + p.lng, 0) / points.length;
+      centerSource = 'address';
+    }
+
+    const normalizeText = (value: string) => value.replace(/\s+/g, '').toLowerCase();
+
+    const toNumberOrNull = (value: unknown) => {
+      if (typeof value === 'number' && Number.isFinite(value)) return value;
+      if (typeof value !== 'string') return null;
+      const trimmed = value.trim();
+      if (!trimmed) return null;
+      const normalized = trimmed
+        .replace(/,/g, '')
+        .replace(/\s+/g, '')
+        .replace(/원|만원|건|%/g, '');
+      const parsed = Number(normalized);
+      return Number.isFinite(parsed) ? parsed : null;
+    };
+
+    const parseMonthKey = (value: unknown): string | null => {
+      if (typeof value !== 'string' && typeof value !== 'number') return null;
+      const raw = String(value).trim();
+      if (!raw) return null;
+
+      const compact = raw.replace(/[^0-9]/g, '');
+      if (/^\d{8}$/.test(compact)) return `${compact.slice(0, 4)}-${compact.slice(4, 6)}`;
+      if (/^\d{6}$/.test(compact)) return `${compact.slice(0, 4)}-${compact.slice(4, 6)}`;
+
+      const isoLike = raw.match(/(\d{4})[-./년 ]\s*(\d{1,2})/);
+      if (isoLike) {
+        const year = isoLike[1];
+        const month = isoLike[2].padStart(2, '0');
+        return `${year}-${month}`;
+      }
+      return null;
+    };
+
+    const pickFirstString = (row: Record<string, unknown>, candidateKeys: string[]) => {
+      for (const key of candidateKeys) {
+        const value = row[key];
+        if (typeof value === 'string' && value.trim()) return value.trim();
+      }
+      return null;
+    };
+
+    const extractStringBag = (row: Record<string, unknown>) =>
+      Object.values(row)
+        .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+        .join(' ');
+
+    const pickMetricValue = (row: Record<string, unknown>) => {
+      const prioritizedKeys = [
+        'DTA_VAL',
+        'VAL',
+        'DTVAL_CO',
+        'TRD_AMT',
+        'DEAL_AMT',
+        'PRICE',
+        '거래금액',
+        '실거래가',
+      ];
+      for (const key of prioritizedKeys) {
+        const value = toNumberOrNull(row[key]);
+        if (value !== null) return value;
+      }
+
+      for (const value of Object.values(row)) {
+        const parsed = toNumberOrNull(value);
+        if (parsed !== null) return parsed;
+      }
+      return null;
+    };
+
+    const kakaoRestApiKey = (
+      process.env.KAKAO_REST_API_KEY ||
+      process.env.KAKAO_LOCAL_REST_API_KEY ||
+      process.env.KAKAO_MAP_REST_API_KEY ||
+      ''
+    ).trim();
+
+    let regionContext: {
+      sido: string | null;
+      sigungu: string | null;
+      dong: string | null;
+      bCode: string | null;
+      display: string | null;
+    } | null = null;
+    let nearbyRegionNames: string[] = [];
+    let nearbyLawdCodes: string[] = [];
+
+    if (kakaoRestApiKey) {
+      try {
+        const coordUrl = `https://dapi.kakao.com/v2/local/geo/coord2regioncode.json?x=${centerLng}&y=${centerLat}`;
+        const response = await fetch(coordUrl, {
+          headers: {
+            Authorization: `KakaoAK ${kakaoRestApiKey}`,
+          },
+        });
+        if (response.ok) {
+          const payload = await response.json() as {
+            documents?: Array<{
+              region_type?: string;
+              address_name?: string;
+              region_1depth_name?: string;
+              region_2depth_name?: string;
+              region_3depth_name?: string;
+              code?: string;
+            }>;
+          };
+          const selected =
+            payload.documents?.find((doc) => doc.region_type === 'B') ||
+            payload.documents?.[0];
+          if (selected) {
+            regionContext = {
+              sido: selected.region_1depth_name || null,
+              sigungu: selected.region_2depth_name || null,
+              dong: selected.region_3depth_name || null,
+              bCode: selected.code || null,
+              display: selected.address_name || null,
+            };
+          }
+        }
+      } catch (regionError) {
+        console.warn('Address market region resolve failed:', regionError);
+      }
+    }
+
+    // 중심점 반경에 걸쳐있는 인접 행정구역(법정동/시군구)을 확보해 외부 거래 필터에 사용
+    const toRad = (deg: number) => (deg * Math.PI) / 180;
+    const haversineMeters = (lat1: number, lng1: number, lat2: number, lng2: number) => {
+      const R = 6371000;
+      const dLat = toRad(lat2 - lat1);
+      const dLng = toRad(lng2 - lng1);
+      const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+        Math.sin(dLng / 2) * Math.sin(dLng / 2);
+      const cVal = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      return R * cVal;
+    };
+
+    const safeCosLocal = Math.max(Math.cos((centerLat * Math.PI) / 180), 0.01);
+    const latDeltaLocal = radiusMeters / 111320;
+    const lngDeltaLocal = radiusMeters / (111320 * safeCosLocal);
+
+    const localWhereClause: any = {
+      userId,
+      latitude: {
+        not: null,
+        gte: centerLat - latDeltaLocal,
+        lte: centerLat + latDeltaLocal,
+      },
+      longitude: {
+        not: null,
+        gte: centerLng - lngDeltaLocal,
+        lte: centerLng + lngDeltaLocal,
+      },
+    };
+    if (realEstateType) {
+      localWhereClause.realEstateTypeCode = realEstateType;
+    }
+    if (tradeType) {
+      localWhereClause.tradeTypeCode = tradeType;
+    }
+
+    const localCandidates = await prisma.property.findMany({
+      where: localWhereClause,
+      select: {
+        articleNo: true,
+        articleName: true,
+        buildingName: true,
+        tradeTypeCode: true,
+        tradeTypeName: true,
+        realEstateTypeCode: true,
+        realEstateTypeName: true,
+        dealOrWarrantPrc: true,
+        rentPrc: true,
+        area2: true,
+        latitude: true,
+        longitude: true,
+        articleConfirmYmd: true,
+        cortarAddress: true,
+        roadAddress: true,
+      },
+      take: 1500,
+    });
+
+    const scopedLocalProps = localCandidates
+      .flatMap((row) => {
+        if (row.latitude === null || row.longitude === null) return [];
+        const distanceM = Math.round(haversineMeters(centerLat, centerLng, row.latitude, row.longitude));
+        if (distanceM > radiusMeters) return [];
+
+        return [{
+          ...row,
+          distanceM,
+          addressText: row.roadAddress || row.cortarAddress || '-',
+        }];
+      })
+      .sort((a, b) => {
+        if (a.distanceM !== b.distanceM) return a.distanceM - b.distanceM;
+        return (b.articleConfirmYmd || '').localeCompare(a.articleConfirmYmd || '');
+      });
+
+    const mapSamples = scopedLocalProps.slice(0, 80).map((row, idx) => ({
+      id: `${row.articleNo}-${row.articleConfirmYmd || 'na'}-${idx}`,
+      articleNo: row.articleNo,
+      articleName: row.articleName,
+      buildingName: row.buildingName,
+      tradeTypeCode: row.tradeTypeCode,
+      tradeTypeName: row.tradeTypeName,
+      realEstateTypeCode: row.realEstateTypeCode,
+      realEstateTypeName: row.realEstateTypeName,
+      price: row.dealOrWarrantPrc,
+      rentPrc: row.rentPrc,
+      area: row.area2,
+      latitude: row.latitude,
+      longitude: row.longitude,
+      distanceM: row.distanceM,
+      articleConfirmYmd: row.articleConfirmYmd,
+      address: row.addressText,
+    }));
+
+    try {
+      const regionSearchMeters = Math.max(radiusMeters + 800, Math.round(radiusMeters * 1.5));
+      const safeCos = Math.max(Math.cos((centerLat * Math.PI) / 180), 0.01);
+      const latDelta = regionSearchMeters / 111320;
+      const lngDelta = regionSearchMeters / (111320 * safeCos);
+
+      const nearbyRegions = await prisma.region.findMany({
+        where: {
+          centerLat: {
+            not: null,
+            gte: centerLat - latDelta,
+            lte: centerLat + latDelta,
+          },
+          centerLon: {
+            not: null,
+            gte: centerLng - lngDelta,
+            lte: centerLng + lngDelta,
+          },
+          depth: {
+            gte: 1,
+            lte: 2,
+          },
+        },
+        select: {
+          cortarNo: true,
+          cortarName: true,
+          parentCortarNo: true,
+          depth: true,
+          centerLat: true,
+          centerLon: true,
+        },
+        take: 300,
+      });
+
+      const intersectedRegions = nearbyRegions.filter((region) => {
+        if (region.centerLat === null || region.centerLon === null) return false;
+        return haversineMeters(centerLat, centerLng, region.centerLat, region.centerLon) <= regionSearchMeters;
+      });
+      nearbyLawdCodes = Array.from(
+        new Set(
+          intersectedRegions
+            .map((region) => region.cortarNo?.slice(0, 5))
+            .filter((code): code is string => !!code && /^\d{5}$/.test(code))
+        )
+      );
+
+      const parentIds = Array.from(
+        new Set(
+          intersectedRegions
+            .map((region) => region.parentCortarNo)
+            .filter((value): value is string => !!value)
+        )
+      );
+
+      const parentMap = new Map<string, string>();
+      if (parentIds.length > 0) {
+        const parents = await prisma.region.findMany({
+          where: {
+            cortarNo: {
+              in: parentIds,
+            },
+          },
+          select: {
+            cortarNo: true,
+            cortarName: true,
+          },
+        });
+        for (const parent of parents) {
+          parentMap.set(parent.cortarNo, parent.cortarName);
+        }
+      }
+
+      const names = new Set<string>();
+      for (const region of intersectedRegions) {
+        if (region.cortarName) names.add(region.cortarName);
+        const parentName = region.parentCortarNo ? parentMap.get(region.parentCortarNo) : null;
+        if (parentName && region.cortarName && region.depth >= 2) {
+          names.add(`${parentName} ${region.cortarName}`);
+        }
+      }
+      nearbyRegionNames = Array.from(names);
+    } catch (nearbyRegionError) {
+      console.warn('Address market nearby-region resolve failed:', nearbyRegionError);
+    }
+
+    // ── 카카오 Local API를 통한 주요 인프라(POI) 카운트 확보 ──
+    const infrastructure: Record<string, number> = {
+      subway: 0,
+      school: 0,
+      hospital: 0,
+      pharmacy: 0,
+      convenience: 0,
+      cafe: 0,
+    };
+    let infrastructureAvailable = false;
+    let infrastructureMessage: string | null = null;
+
+    if (kakaoRestApiKey) {
+      try {
+        const fetchCategoryCount = async (categoryGroupCode: string) => {
+          const url = `https://dapi.kakao.com/v2/local/search/category.json?category_group_code=${categoryGroupCode}&x=${centerLng}&y=${centerLat}&radius=${radiusMeters}`;
+          const response = await fetch(url, {
+            headers: { Authorization: `KakaoAK ${kakaoRestApiKey}` },
+          });
+          if (!response.ok) {
+            const bodyText = await response.text();
+            const compact = bodyText.replace(/\s+/g, ' ').slice(0, 180);
+            throw new Error(`카카오 인프라 API 제한 또는 오류 (${response.status}): ${compact}`);
+          }
+          const data = await response.json() as { meta?: { total_count?: number } };
+          return data.meta?.total_count || 0;
+        };
+
+        const [subway, school, hospital, pharmacy, convenience, cafe] = await Promise.all([
+          fetchCategoryCount('SW8'), // 지하철역
+          fetchCategoryCount('SC4'), // 학교
+          fetchCategoryCount('HP8'), // 병원
+          fetchCategoryCount('PM9'), // 약국
+          fetchCategoryCount('CS2'), // 편의점
+          fetchCategoryCount('CE7'), // 카페
+        ]);
+
+        infrastructure.subway = subway;
+        infrastructure.school = school;
+        infrastructure.hospital = hospital;
+        infrastructure.pharmacy = pharmacy;
+        infrastructure.convenience = convenience;
+        infrastructure.cafe = cafe;
+        infrastructureAvailable = true;
+      } catch (poiError) {
+        console.warn('Address market POI counts resolve failed:', poiError);
+        infrastructureMessage = poiError instanceof Error ? poiError.message : '카카오 인프라 API 호출 실패';
+      }
+    } else {
+      infrastructureMessage = 'KAKAO_REST_API_KEY 미설정으로 인프라 집계 불가';
+    }
+    const summaryInfrastructure = infrastructureAvailable ? infrastructure : undefined;
+
+    const externalStatblId = (c.req.query('statblId') || process.env.REB_ADDRESS_MARKET_STATBL_ID || 'A_2024_00900').trim();
+    const pageSizeRaw = parseInt(c.req.query('externalPageSize') || process.env.REB_ADDRESS_MARKET_PAGE_SIZE || '1000', 10);
+    const maxPagesRaw = parseInt(c.req.query('externalPages') || process.env.REB_ADDRESS_MARKET_MAX_PAGES || '3', 10);
+    const pageSize = Number.isFinite(pageSizeRaw) ? Math.min(1000, Math.max(100, pageSizeRaw)) : 1000;
+    const maxPages = Number.isFinite(maxPagesRaw) ? Math.min(5, Math.max(1, maxPagesRaw)) : 3;
+    let externalRows: Record<string, unknown>[] = [];
+    let listTotalCount: number | null = null;
+    let serviceName: string | null = null;
+    let rebLoaded = false;
+
+    const loadRebRows = async () => {
+      if (rebLoaded) return;
+      const pageResults = await Promise.all(
+        Array.from({ length: maxPages }, (_, idx) =>
+          fetchRebTableData({
+            statblId: externalStatblId,
+            page: idx + 1,
+            size: pageSize,
+            type: 'json',
+          })
+        )
+      );
+
+      externalRows = pageResults.flatMap((result) => result.rows as Record<string, unknown>[]);
+      listTotalCount = pageResults[0]?.listTotalCount ?? null;
+      serviceName = pageResults[0]?.serviceName ?? null;
+      rebLoaded = true;
+    };
+
+    const molitConfig = getMolitApiConfigStatus();
+    const rebConfig = getRebApiConfigStatus();
+
+    const createEmptyResponse = (fetchedSize: number = 0) => ({
+      center: {
+        latitude: centerLat,
+        longitude: centerLng,
+        source: centerSource,
+        address: address || null,
+      },
+      filters: {
+        radiusMeters,
+        realEstateType: realEstateType || null,
+        tradeType: tradeType || null,
+      },
+      summary: {
+        totalCount: 0,
+        avgPrice: 0,
+        medianPrice: 0,
+        minPrice: 0,
+        maxPrice: 0,
+        avgPricePerArea: 0,
+        infrastructure: summaryInfrastructure,
+      },
+      tradeDistribution: [],
+      propertyTypeDistribution: [],
+      distanceStats: [],
+      monthlyTrend: [],
+      recentTransactions: [],
+      mapSamples,
+      sourceMeta: {
+        sourceType: 'PUBLIC_DATA_EMPTY',
+        statblId: externalStatblId,
+        serviceName,
+        listTotalCount,
+        fetchedRows: fetchedSize,
+        scopedRows: 0,
+        analyzedRows: 0,
+        region: regionContext?.display || null,
+        nearbyRegionCount: nearbyRegionNames.length,
+        nearbyRegions: nearbyRegionNames,
+        infrastructureMessage,
+      },
+    });
+
+    const fetchLocalFallbackData = async (fetchedSize: number = 0) => {
+      const scopedProps = scopedLocalProps;
+
+      if (scopedProps.length === 0) {
+        const empty = createEmptyResponse(fetchedSize);
+        return {
+          ...empty,
+          sourceMeta: {
+            ...(empty.sourceMeta || {}),
+            sourceType: 'LOCAL_DB_FALLBACK',
+            statblId: null,
+            serviceName: '자체 DB 반경 내 매물 없음',
+          },
+        };
+      }
+
+      const totalCount = scopedProps.length;
+      const validPrices = scopedProps
+        .map(p => p.dealOrWarrantPrc)
+        .filter((prc): prc is number => prc !== null && prc > 0)
+        .sort((a, b) => a - b);
+
+      const avgPrice = validPrices.length > 0 ? Math.round(validPrices.reduce((a, b) => a + b, 0) / validPrices.length) : 0;
+      const medianPrice = validPrices.length > 0 ? validPrices[Math.floor(validPrices.length / 2)] : 0;
+      const minPrice = validPrices.length > 0 ? validPrices[0] : 0;
+      const maxPrice = validPrices.length > 0 ? validPrices[validPrices.length - 1] : 0;
+
+      const validAreaPrices = scopedProps
+        .filter((p) => p.dealOrWarrantPrc && p.area2 && p.area2 > 0)
+        .map((p) => p.dealOrWarrantPrc! / p.area2!);
+      const avgPricePerArea = validAreaPrices.length > 0
+        ? Math.round(validAreaPrices.reduce((a, b) => a + b, 0) / validAreaPrices.length)
+        : 0;
+
+      const tradeMap = new Map<string, number>();
+      const typeMap = new Map<string, number>();
+      scopedProps.forEach(p => {
+        tradeMap.set(p.tradeTypeName, (tradeMap.get(p.tradeTypeName) || 0) + 1);
+        typeMap.set(p.realEstateTypeName, (typeMap.get(p.realEstateTypeName) || 0) + 1);
+      });
+
+      const tradeDistribution = Array.from(tradeMap.entries()).map(([name, count]) => ({
+        name, count, ratio: Number(((count / totalCount) * 100).toFixed(1))
+      })).sort((a, b) => b.count - a.count);
+
+      const propertyTypeDistribution = Array.from(typeMap.entries()).map(([name, count]) => ({
+        name, count, ratio: Number(((count / totalCount) * 100).toFixed(1))
+      })).sort((a, b) => b.count - a.count);
+
+      const monthlyMap = new Map<string, { sum: number; count: number; transCount: number }>();
+      for (const row of scopedProps) {
+        if (!row.articleConfirmYmd) continue;
+        const month = row.articleConfirmYmd.substring(0, 6).replace(/(\d{4})(\d{2})/, '$1-$2'); // YYYYMM -> YYYY-MM
+        const prev = monthlyMap.get(month) || { sum: 0, count: 0, transCount: 0 };
+        if (row.dealOrWarrantPrc) {
+          prev.sum += row.dealOrWarrantPrc;
+          prev.count += 1;
+        }
+        prev.transCount += 1;
+        monthlyMap.set(month, prev);
+      }
+
+      const monthlyTrend = Array.from(monthlyMap.entries())
+        .sort(([a], [b]) => a.localeCompare(b))
+        .slice(-18)
+        .map(([month, val]) => ({
+          month,
+          avgPrice: val.count > 0 ? Math.round(val.sum / val.count) : 0,
+          transactionCount: val.transCount,
+        }));
+
+      const recentTransactions = [...scopedProps]
+        .sort((a, b) => {
+          const aKey = a.articleConfirmYmd || '';
+          const bKey = b.articleConfirmYmd || '';
+          if (aKey && bKey) return bKey.localeCompare(aKey);
+          return 0; // fallback
+        })
+        .slice(0, 30)
+        .map((tx) => ({
+          articleNo: tx.articleNo,
+          articleName: tx.articleName,
+          buildingName: tx.buildingName,
+          tradeTypeName: tx.tradeTypeName,
+          realEstateTypeName: tx.realEstateTypeName,
+          price: tx.dealOrWarrantPrc || 0,
+          rentPrc: tx.rentPrc,
+          area: tx.area2,
+          distanceM: tx.distanceM,
+          articleConfirmYmd: tx.articleConfirmYmd,
+          address: tx.addressText,
+        }));
+
+      return {
+        center: { latitude: centerLat, longitude: centerLng, source: centerSource, address: address || null },
+        filters: { radiusMeters, realEstateType: realEstateType || null, tradeType: tradeType || null },
+        summary: {
+          totalCount,
+          avgPrice,
+          medianPrice,
+          minPrice,
+          maxPrice,
+          avgPricePerArea,
+          infrastructure: summaryInfrastructure,
+        },
+        tradeDistribution,
+        propertyTypeDistribution,
+        distanceStats: [{
+          band: regionContext?.display ? `${regionContext.display} 자체 확보 매물` : '자체 확보 반경내 매물',
+          count: totalCount,
+          avgPrice,
+          medianPrice,
+        }],
+        monthlyTrend,
+        recentTransactions,
+        mapSamples,
+        sourceMeta: {
+          sourceType: 'LOCAL_DB_FALLBACK',
+          statblId: null,
+          serviceName: '자체 네이버 크롤링 등 DB 확보 매물 기반 시세 산출',
+          listTotalCount: totalCount,
+          fetchedRows: fetchedSize,
+          scopedRows: totalCount,
+          analyzedRows: totalCount,
+          region: regionContext?.display || null,
+          nearbyRegionCount: nearbyRegionNames.length,
+          nearbyRegions: nearbyRegionNames,
+          infrastructureMessage,
+        },
+      };
+    };
+
+    if (source === 'molit' || source === 'auto') {
+      if (molitConfig.configured) {
+        const lawdCdFromRegion = regionContext?.bCode?.slice(0, 5) || null;
+        const molitLawdCd = lawdCdFromRegion && /^\d{5}$/.test(lawdCdFromRegion)
+          ? lawdCdFromRegion
+          : nearbyLawdCodes[0] || null;
+
+        if (molitLawdCd) {
+          const buildDealMonths = () => {
+            const now = new Date();
+            const ym: string[] = [];
+            for (let back = molitMonthsBack; back >= 0; back -= 1) {
+              const date = new Date(now.getFullYear(), now.getMonth() - back, 1);
+              const y = String(date.getFullYear());
+              const m = String(date.getMonth() + 1).padStart(2, '0');
+              ym.push(`${y}${m}`);
+            }
+            return ym;
+          };
+
+          // 기본(전체) 조회는 실사용 빈도가 높고 응답 안정성이 높은 유형 중심으로 우선 수집한다.
+          // 기타 유형은 realEstateType 필터를 선택했을 때만 조회한다.
+          const defaultSaleCategories: MolitCategory[] = [
+            'apt-sale',
+            'offi-sale',
+          ];
+          const defaultRentCategories: MolitCategory[] = [
+            'apt-rent',
+            'offi-rent',
+          ];
+
+          const saleByType: Record<string, MolitCategory[]> = {
+            APT: ['apt-sale'],
+            OPST: ['offi-sale'],
+            SG: ['bldg-sale'],
+            VL: ['indvdland-sale'],
+            ONEROOM: ['indvdland-sale'],
+            TWOROOM: ['indvdland-sale'],
+          };
+          const rentByType: Record<string, MolitCategory[]> = {
+            APT: ['apt-rent'],
+            OPST: ['offi-rent'],
+            SG: ['bldg-rent'],
+            VL: ['sh-rent'],
+            ONEROOM: ['sh-rent'],
+            TWOROOM: ['sh-rent'],
+          };
+
+          const saleCategories = saleByType[realEstateType] || defaultSaleCategories;
+          const rentCategories = rentByType[realEstateType] || defaultRentCategories;
+          let categories: MolitCategory[] = [];
+
+          if (tradeType === 'A1') {
+            categories = saleCategories;
+          } else if (tradeType === 'B1' || tradeType === 'B2') {
+            categories = rentCategories;
+          } else {
+            categories = [...saleCategories, ...rentCategories];
+          }
+          categories = Array.from(new Set(categories));
+
+          const dealMonths = buildDealMonths();
+          const requests = dealMonths.flatMap((dealYm) =>
+            categories.map((category) => ({ dealYm, category }))
+          );
+
+          const parseMolitErrorMeta = (error: unknown) => {
+            const message = error instanceof Error ? error.message : String(error ?? '');
+            const matched = message.match(/MOLIT API error \(([^)]+)\):\s*(.*)$/);
+            const httpMatched = message.match(/MOLIT API HTTP\s+(\d{3})\s*:\s*(.*)$/i);
+            return {
+              resultCode: matched?.[1] || null,
+              resultMessage: matched?.[2] || null,
+              httpStatus: httpMatched?.[1] || null,
+              httpMessage: httpMatched?.[2] || null,
+            };
+          };
+
+          const results = await Promise.all(
+            requests.map(async ({ dealYm, category }) => {
+              try {
+                const result = await fetchMolitCategoryRows({
+                  lawdCd: molitLawdCd,
+                  dealYm,
+                  category,
+                  maxPages: molitPages,
+                  numOfRows: molitRows,
+                });
+                return { dealYm, result };
+              } catch (molitError) {
+                const { resultCode, resultMessage, httpStatus, httpMessage } = parseMolitErrorMeta(molitError);
+                console.warn('[AddressMarket][MOLIT] fetch failed:', {
+                  dealYm,
+                  category,
+                  resultCode,
+                  resultMessage,
+                  httpStatus,
+                  httpMessage,
+                  molitError,
+                });
+                return null;
+              }
+            })
+          );
+
+          const validResults = results.filter(
+            (entry): entry is { dealYm: string; result: Awaited<ReturnType<typeof fetchMolitCategoryRows>> } =>
+              entry !== null
+          );
+
+          const fetchedRows = validResults.reduce((sum, entry) => sum + entry.result.rows.length, 0);
+
+          const pickText = (row: Record<string, unknown>, keys: string[]) => {
+            for (const key of keys) {
+              const value = row[key];
+              if (typeof value === 'string' && value.trim()) return value.trim();
+            }
+            return null;
+          };
+
+          const pickNum = (row: Record<string, unknown>, keys: string[]) => {
+            for (const key of keys) {
+              const value = toNumberOrNull(row[key]);
+              if (value !== null) return value;
+            }
+            return null;
+          };
+
+          const normalizedMolit = validResults.flatMap(({ dealYm, result }, resultIndex) => {
+            return result.rows.flatMap((row, rowIndex) => {
+              const dealAmount = pickNum(row, ['거래금액', '거래금액(만원)', '거래가액', 'dealAmount']);
+              const depositAmount = pickNum(row, ['보증금액', '보증금', '임대보증금', 'deposit']);
+              const rentAmount = pickNum(row, ['월세금액', '월세', 'monthlyRent']);
+
+              const value = result.tradeMode === 'sale'
+                ? dealAmount
+                : (depositAmount ?? dealAmount);
+
+              if (value === null || value <= 0) return [];
+
+              const dealYearText = pickText(row, ['년', '계약년도', 'dealYear']) || dealYm.slice(0, 4);
+              const dealMonthText = pickText(row, ['월', '계약월', 'dealMonth']) || dealYm.slice(4, 6);
+              const dealDayText = pickText(row, ['일', '계약일', 'dealDay']) || '01';
+              const dealMonth = parseMonthKey(`${dealYearText}${dealMonthText.padStart(2, '0')}`)
+                || parseMonthKey(row['계약년월'])
+                || parseMonthKey(row['dealYearMonth'])
+                || `${dealYm.slice(0, 4)}-${dealYm.slice(4, 6)}`;
+              const articleConfirmYmd = `${dealMonth.replace('-', '')}${dealDayText.padStart(2, '0')}`;
+
+              const addressParts = [
+                pickText(row, ['시군구']),
+                pickText(row, ['sggNm']),
+                pickText(row, ['법정동']),
+                pickText(row, ['umdNm']),
+                pickText(row, ['도로명']),
+                pickText(row, ['roadNm']),
+                pickText(row, ['지번']),
+                pickText(row, ['jibun']),
+              ].filter((v): v is string => !!v);
+
+              const tradeTypeCode = result.tradeMode === 'sale'
+                ? 'A1'
+                : (rentAmount && rentAmount > 0 ? 'B2' : 'B1');
+              if (tradeType && tradeType !== tradeTypeCode) return [];
+
+              const tradeTypeName = tradeTypeCode === 'A1'
+                ? '매매'
+                : (tradeTypeCode === 'B1' ? '전세' : '월세');
+
+              const articleName = pickText(row, ['아파트', '단지', '건물명', '건축물대장건물명', '법정동', 'aptNm', 'offiNm', 'mhouseNm'])
+                || `${result.propertyTypeName} ${tradeTypeName}`;
+
+              const area = pickNum(row, ['전용면적', '대지면적', '건물면적', '연면적', 'excluUseAr', 'landAr']);
+
+              return [{
+                index: resultIndex * 100000 + rowIndex,
+                month: dealMonth,
+                value,
+                tradeTypeCode,
+                tradeTypeName,
+                realEstateTypeName: result.propertyTypeName,
+                articleName,
+                addressText: addressParts.length > 0 ? addressParts.join(' ') : (regionContext?.display || '-'),
+                articleConfirmYmd,
+                rentPrc: rentAmount,
+                area,
+              }];
+            });
+          });
+
+          if (normalizedMolit.length > 0) {
+            const priceValues = normalizedMolit.map((row) => row.value);
+            const totalCount = normalizedMolit.length;
+            const avgPrice = Math.round(priceValues.reduce((sum, value) => sum + value, 0) / totalCount);
+            const medianPrice = toMedian(priceValues);
+            const minPrice = Math.min(...priceValues);
+            const maxPrice = Math.max(...priceValues);
+
+            const validAreaPrices = normalizedMolit
+              .filter((row) => row.area !== null && row.area > 0)
+              .map((row) => row.value / row.area!);
+            const avgPricePerArea = validAreaPrices.length > 0
+              ? Math.round(validAreaPrices.reduce((sum, value) => sum + value, 0) / validAreaPrices.length)
+              : 0;
+
+            const tradeMap = new Map<string, number>();
+            const typeMap = new Map<string, number>();
+            for (const row of normalizedMolit) {
+              tradeMap.set(row.tradeTypeName, (tradeMap.get(row.tradeTypeName) || 0) + 1);
+              typeMap.set(row.realEstateTypeName, (typeMap.get(row.realEstateTypeName) || 0) + 1);
+            }
+
+            const tradeDistribution = Array.from(tradeMap.entries())
+              .map(([name, count]) => ({
+                name,
+                count,
+                ratio: Number(((count / totalCount) * 100).toFixed(1)),
+              }))
+              .sort((a, b) => b.count - a.count);
+
+            const propertyTypeDistribution = Array.from(typeMap.entries())
+              .map(([name, count]) => ({
+                name,
+                count,
+                ratio: Number(((count / totalCount) * 100).toFixed(1)),
+              }))
+              .sort((a, b) => b.count - a.count);
+
+            const monthlyMap = new Map<string, { sum: number; count: number; transCount: number }>();
+            for (const row of normalizedMolit) {
+              const prev = monthlyMap.get(row.month) || { sum: 0, count: 0, transCount: 0 };
+              prev.sum += row.value;
+              prev.count += 1;
+              prev.transCount += 1;
+              monthlyMap.set(row.month, prev);
+            }
+
+            const monthlyTrend = Array.from(monthlyMap.entries())
+              .sort(([a], [b]) => a.localeCompare(b))
+              .slice(-18)
+              .map(([month, val]) => ({
+                month,
+                avgPrice: val.count > 0 ? Math.round(val.sum / val.count) : 0,
+                transactionCount: val.transCount,
+              }));
+
+            const recentTransactions = [...normalizedMolit]
+              .sort((a, b) => b.articleConfirmYmd.localeCompare(a.articleConfirmYmd))
+              .slice(0, 30)
+              .map((row, idx) => ({
+                articleNo: `molit-${idx + 1}`,
+                articleName: row.articleName,
+                buildingName: null,
+                tradeTypeName: row.tradeTypeName,
+                realEstateTypeName: row.realEstateTypeName,
+                price: Math.round(row.value),
+                rentPrc: row.rentPrc,
+                area: row.area,
+                distanceM: null,
+                articleConfirmYmd: row.articleConfirmYmd,
+                address: row.addressText,
+              }));
+
+            return c.json({
+              center: {
+                latitude: centerLat,
+                longitude: centerLng,
+                source: centerSource,
+                address: address || null,
+              },
+              filters: {
+                radiusMeters,
+                realEstateType: realEstateType || null,
+                tradeType: tradeType || null,
+              },
+              summary: {
+                totalCount,
+                avgPrice,
+                medianPrice,
+                minPrice,
+                maxPrice,
+                avgPricePerArea,
+                infrastructure: summaryInfrastructure,
+              },
+              tradeDistribution,
+              propertyTypeDistribution,
+              distanceStats: [
+                {
+                  band: regionContext?.display ? `${regionContext.display} 집계` : '법정동 집계',
+                  count: totalCount,
+                  avgPrice,
+                  medianPrice,
+                },
+              ],
+              monthlyTrend,
+              recentTransactions,
+              mapSamples,
+              sourceMeta: {
+                sourceType: 'external-molit-rtms',
+                statblId: null,
+                serviceName: '국토교통부 실거래가 API (공공데이터포털)',
+                listTotalCount: null,
+                fetchedRows,
+                scopedRows: normalizedMolit.length,
+                analyzedRows: normalizedMolit.length,
+                region: regionContext?.display || null,
+                nearbyRegionCount: nearbyRegionNames.length,
+                nearbyRegions: nearbyRegionNames.slice(0, 10),
+                lawdCd: molitLawdCd,
+                months: dealMonths,
+                infrastructureMessage,
+              },
+            });
+          }
+
+          if (source === 'molit') {
+            const empty = createEmptyResponse(fetchedRows);
+            return c.json({
+              ...empty,
+              sourceMeta: {
+                ...(empty.sourceMeta || {}),
+                sourceType: 'PUBLIC_DATA_EMPTY',
+                serviceName: '국토부 실거래가 조회 결과 없음 (API 권한/승인 상태 확인 필요)',
+              },
+            });
+          }
+        }
+      }
+
+      if (source === 'molit') {
+        const empty = createEmptyResponse(0);
+        return c.json({
+          ...empty,
+          sourceMeta: {
+            ...(empty.sourceMeta || {}),
+            sourceType: 'PUBLIC_DATA_EMPTY',
+            serviceName: molitConfig.configured
+              ? '국토부 실거래가 조회 조건 미충족 또는 API 권한 미승인'
+              : '국토부 API 키 미설정',
+          },
+        });
+      }
+    }
+
+    if (source === 'local') {
+      return c.json(await fetchLocalFallbackData(0));
+    }
+
+    if (!rebConfig.configured) {
+      const localFallback = await fetchLocalFallbackData(0);
+      return c.json({
+        ...localFallback,
+        sourceMeta: {
+          ...(localFallback.sourceMeta || {}),
+          serviceName: source === 'reb'
+            ? 'REB API 키 미설정, 로컬 DB로 분석'
+            : '공공 API 키 미설정, 로컬 DB로 분석',
+        },
+      });
+    }
+
+    try {
+      await loadRebRows();
+    } catch (rebError) {
+      console.warn('[AddressMarket][REB] fetch failed:', rebError);
+      const localFallback = await fetchLocalFallbackData(0);
+      return c.json({
+        ...localFallback,
+        sourceMeta: {
+          ...(localFallback.sourceMeta || {}),
+          serviceName: source === 'reb'
+            ? 'REB 통계 조회 실패, 로컬 DB로 분석'
+            : '공공 통계 조회 실패, 로컬 DB로 분석',
+        },
+      });
+    }
+
+    if (externalRows.length === 0) {
+      const localFallback = await fetchLocalFallbackData(0);
+      return c.json({
+        ...localFallback,
+        sourceMeta: {
+          ...(localFallback.sourceMeta || {}),
+          serviceName: '공공데이터 조회 결과 없음, 로컬 DB로 분석',
+        },
+      });
+    }
+
+    const regionTokens = Array.from(
+      new Set(
+        [regionContext?.sido, regionContext?.sigungu, regionContext?.dong, ...nearbyRegionNames]
+          .filter((value): value is string => !!value && value.trim().length > 0)
+          .map((value) => normalizeText(value))
+      )
+    );
+
+    const scopedRows = externalRows.filter((row) => {
+      if (regionTokens.length === 0) return true;
+      const bag = normalizeText(extractStringBag(row));
+      if (!bag) return false;
+      return regionTokens.some((token) => bag.includes(token));
+    });
+
+    const sourceRows = scopedRows.length > 0 ? scopedRows : externalRows;
+
+    const externalData = sourceRows
+      .map((row, index) => {
+        const value = pickMetricValue(row);
+        if (value === null) return null;
+
+        const month =
+          parseMonthKey(row.WRTTIME_IDTFR_ID) ||
+          parseMonthKey(row.WRTTIME_IDTFR) ||
+          parseMonthKey(row.BASE_DE) ||
+          parseMonthKey(row.DEAL_YMD) ||
+          parseMonthKey(row.DEAL_DATE);
+
+        const tradeTypeName =
+          pickFirstString(row, ['TRD_SE_NM', 'TRADE_TYPE_NM', 'ITM_NM', 'ITM_TAG']) ||
+          '확정거래';
+        const realEstateTypeName =
+          pickFirstString(row, ['RLET_TY_NM', 'HOUSE_TY_NM', 'CLS_NM', 'C1_NM', 'C2_NM']) ||
+          '주택';
+        const articleName =
+          pickFirstString(row, ['APT_NM', 'COMPLEX_NM', 'STATBL_NM', 'ITM_NM']) ||
+          `${realEstateTypeName} ${tradeTypeName}`;
+        const addressText =
+          pickFirstString(row, ['SIGUNGU_NM', 'LEGALDONG_NM', 'ADDR']) ||
+          regionContext?.display ||
+          address ||
+          '-';
+
+        const articleConfirmYmd = month ? `${month.replace('-', '')}01` : null;
+
+        return {
+          index,
+          month,
+          value,
+          tradeTypeName,
+          realEstateTypeName,
+          articleName,
+          addressText,
+          articleConfirmYmd,
+        };
+      })
+      .filter((row): row is NonNullable<typeof row> => row !== null);
+
+    if (externalData.length === 0) {
+      return c.json({
+        ...createEmptyResponse(externalRows.length),
+        sourceMeta: {
+          ...(createEmptyResponse(externalRows.length).sourceMeta || {}),
+          sourceType: 'PUBLIC_DATA_EMPTY',
+          serviceName: '공공데이터 정규화 결과 없음',
+        },
+      });
+    }
+
+    const tradeTypeHints: Record<string, string[]> = {
+      A1: ['매매', '매매거래', 'sale'],
+      B1: ['전세', '임대차', 'lease'],
+      B2: ['월세', '월임대', 'rent'],
+    };
+    const propertyTypeHints: Record<string, string[]> = {
+      APT: ['아파트', '공동주택', 'apt'],
+      OPST: ['오피스텔', 'officetel'],
+      VL: ['빌라', '연립', '다세대'],
+      ONEROOM: ['원룸'],
+      TWOROOM: ['투룸'],
+      SG: ['상가', '근린', '점포'],
+    };
+
+    const normalizedExternal = externalData.map((row) => ({
+      ...row,
+      normalizedTrade: normalizeText(row.tradeTypeName),
+      normalizedType: normalizeText(row.realEstateTypeName),
+      normalizedBag: normalizeText(`${row.realEstateTypeName} ${row.tradeTypeName} ${row.articleName} ${row.addressText}`),
+    }));
+
+    const filteredExternalData = normalizedExternal.filter((row) => {
+      if (tradeType) {
+        const hints = tradeTypeHints[tradeType] || [];
+        if (hints.length > 0) {
+          const matched = hints.some((hint) => {
+            const token = normalizeText(hint);
+            return row.normalizedTrade.includes(token) || row.normalizedBag.includes(token);
+          });
+          if (!matched) return false;
+        }
+      }
+
+      if (realEstateType) {
+        const hints = propertyTypeHints[realEstateType] || [];
+        if (hints.length > 0) {
+          const matched = hints.some((hint) => {
+            const token = normalizeText(hint);
+            return row.normalizedType.includes(token) || row.normalizedBag.includes(token);
+          });
+          if (!matched) return false;
+        }
+      }
+
+      return true;
+    });
+
+    if (filteredExternalData.length === 0) { // If filtering by tradeType or realEstateType results in no data
+      return c.json({
+        ...createEmptyResponse(externalRows.length),
+        sourceMeta: {
+          ...(createEmptyResponse(externalRows.length).sourceMeta || {}),
+          sourceType: 'PUBLIC_DATA_EMPTY',
+          serviceName: '공공데이터 필터 결과 없음',
+        },
+      });
+    }
+
+    const scopedExternalData = filteredExternalData.map(({ normalizedTrade, normalizedType, normalizedBag, ...row }) => row);
+
+    if (scopedExternalData.length === 0) { // If after mapping, there's still no data (should be covered by previous check but as a safeguard)
+      return c.json({
+        ...createEmptyResponse(externalRows.length),
+        sourceMeta: {
+          ...(createEmptyResponse(externalRows.length).sourceMeta || {}),
+          sourceType: 'PUBLIC_DATA_EMPTY',
+          serviceName: '공공데이터 분석 결과 없음',
+        },
+      });
+    }
+
+    const priceValues = scopedExternalData.map((row) => row.value);
+    const totalCount = scopedExternalData.length;
+    const avgPrice = Math.round(priceValues.reduce((sum, value) => sum + value, 0) / totalCount);
+    const medianPrice = toMedian(priceValues);
+    const minPrice = Math.min(...priceValues);
+    const maxPrice = Math.max(...priceValues);
+    const avgPricePerArea = 0;
+
+    const tradeTypeMap = new Map<string, number>();
+    const propertyTypeMap = new Map<string, number>();
+    for (const row of scopedExternalData) {
+      tradeTypeMap.set(row.tradeTypeName, (tradeTypeMap.get(row.tradeTypeName) || 0) + 1);
+      propertyTypeMap.set(row.realEstateTypeName, (propertyTypeMap.get(row.realEstateTypeName) || 0) + 1);
+    }
+
+    const tradeDistribution = Array.from(tradeTypeMap.entries())
+      .map(([name, count]) => ({
+        name,
+        count,
+        ratio: Number(((count / totalCount) * 100).toFixed(1)),
+      }))
+      .sort((a, b) => b.count - a.count);
+
+    const propertyTypeDistribution = Array.from(propertyTypeMap.entries())
+      .map(([name, count]) => ({
+        name,
+        count,
+        ratio: Number(((count / totalCount) * 100).toFixed(1)),
+      }))
+      .sort((a, b) => b.count - a.count);
+
+    const distanceStats = [
+      {
+        band: regionContext?.display ? `${regionContext.display} 집계` : '지역 집계',
+        count: totalCount,
+        avgPrice,
+        medianPrice,
+      },
+    ];
+
+    const monthlyMap = new Map<string, { sum: number; count: number; transCount: number }>();
+    for (const row of scopedExternalData) {
+      if (!row.month) continue;
+      const prev = monthlyMap.get(row.month) || { sum: 0, count: 0, transCount: 0 };
+      prev.sum += row.value;
+      prev.count += 1;
+      prev.transCount += 1;
+      monthlyMap.set(row.month, prev);
+    }
+
+    const monthlyTrend = Array.from(monthlyMap.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .slice(-18)
+      .map(([month, val]) => ({
+        month,
+        avgPrice: val.count > 0 ? Math.round(val.sum / val.count) : 0,
+        transactionCount: val.transCount,
+      }));
+
+    const recentTransactions = scopedExternalData
+      .sort((a, b) => {
+        const aKey = a.articleConfirmYmd || '';
+        const bKey = b.articleConfirmYmd || '';
+        if (aKey && bKey) return bKey.localeCompare(aKey);
+        return a.index - b.index;
+      })
+      .slice(0, 30)
+      .map((row, idx) => ({
+        articleNo: `external-${idx + 1}`,
+        articleName: row.articleName,
+        buildingName: null,
+        tradeTypeName: row.tradeTypeName,
+        realEstateTypeName: row.realEstateTypeName,
+        price: Math.round(row.value),
+        rentPrc: null,
+        area: null,
+        distanceM: null,
+        articleConfirmYmd: row.articleConfirmYmd,
+        address: row.addressText,
+      }));
+
+    return c.json({
+      center: {
+        latitude: centerLat,
+        longitude: centerLng,
+        source: centerSource,
+        address: address || null,
+      },
+      filters: {
+        radiusMeters,
+        realEstateType: realEstateType || null,
+        tradeType: tradeType || null,
+      },
+      summary: {
+        totalCount,
+        avgPrice,
+        medianPrice,
+        minPrice,
+        maxPrice,
+        avgPricePerArea,
+        infrastructure: summaryInfrastructure,
+      },
+      tradeDistribution,
+      propertyTypeDistribution,
+      distanceStats,
+      monthlyTrend,
+      recentTransactions,
+      mapSamples,
+      sourceMeta: {
+        sourceType: 'external-reb-confirmed',
+        statblId: externalStatblId,
+        serviceName,
+        listTotalCount,
+        fetchedRows: externalRows.length,
+        scopedRows: sourceRows.length,
+        analyzedRows: scopedExternalData.length,
+        region: regionContext?.display || null,
+        nearbyRegionCount: nearbyRegionNames.length,
+        nearbyRegions: nearbyRegionNames.slice(0, 10),
+        radiusMeters,
+        filters: {
+          realEstateType: realEstateType || null,
+          tradeType: tradeType || null,
+        },
+        infrastructureMessage,
+      },
+    });
+  } catch (error) {
+    console.error('Address market statistics error:', error);
+    const rawMessage = error instanceof Error ? error.message : 'Failed to fetch address market statistics';
+    const shouldMaskDetail =
+      /(api\s*key|service[_\s-]*key|open[_\s-]*api|molit|reb|public[_\s-]*data|configured|set one of)/i.test(rawMessage);
+    const safeMessage = shouldMaskDetail
+      ? '공공데이터 조회 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.'
+      : rawMessage;
+
+    return c.json(
+      {
+        error: safeMessage,
+      },
+      500
+    );
+  }
+});
+
 // ============================================
 // 8. 사용자 관련 API
 // ============================================
@@ -1721,7 +3667,10 @@ app.get('/api/statistics/price-trend', async (c) => {
 app.get('/api/user/saved-properties', async (c) => {
   try {
     // TODO: 인증에서 userId 추출 (현재는 임시)
-    const userId = c.req.header('x-user-id') || 'temp-user';
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
 
     const savedProperties = await prisma.savedProperty.findMany({
       where: { userId },
@@ -1746,20 +3695,16 @@ app.get('/api/user/saved-properties', async (c) => {
  */
 app.post('/api/user/saved-properties', async (c) => {
   try {
-    const userId = c.req.header('x-user-id') || 'temp-user';
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
     const body = await c.req.json();
     const { articleNo, complexNo, complexName, cachedName, cachedPrice, cachedType, cachedTrade, articleData } = body;
 
     if (!articleNo) {
       return c.json({ error: 'articleNo is required' }, 400);
     }
-
-    // user 자동 생성 (없으면)
-    await prisma.user.upsert({
-      where: { id: userId },
-      update: {},
-      create: { id: userId, name: userId, provider: 'local' },
-    });
 
     const saved = await prisma.savedProperty.upsert({
       where: {
@@ -1810,20 +3755,16 @@ app.post('/api/user/saved-properties', async (c) => {
  */
 app.post('/api/user/saved-properties/bulk', async (c) => {
   try {
-    const userId = c.req.header('x-user-id') || 'temp-user';
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
     const body = await c.req.json();
     const { articles, complexNo, complexName } = body;
 
     if (!articles || !Array.isArray(articles) || articles.length === 0) {
       return c.json({ error: 'articles array is required' }, 400);
     }
-
-    // user 자동 생성 (없으면)
-    await prisma.user.upsert({
-      where: { id: userId },
-      update: {},
-      create: { id: userId, name: userId, provider: 'local' },
-    });
 
     let savedCount = 0;
     let skippedCount = 0;
@@ -1886,7 +3827,10 @@ app.post('/api/user/saved-properties/bulk', async (c) => {
  */
 app.delete('/api/user/saved-properties/:articleNo', async (c) => {
   try {
-    const userId = c.req.header('x-user-id') || 'temp-user';
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
     const articleNo = c.req.param('articleNo');
 
     await prisma.savedProperty.deleteMany({
@@ -1912,7 +3856,10 @@ app.delete('/api/user/saved-properties/:articleNo', async (c) => {
  */
 app.delete('/api/user/saved-properties', async (c) => {
   try {
-    const userId = c.req.header('x-user-id') || 'temp-user';
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
     const body = await c.req.json();
     const { articleNos } = body;
 
@@ -1945,7 +3892,10 @@ app.delete('/api/user/saved-properties', async (c) => {
  */
 app.get('/api/user/search-conditions', async (c) => {
   try {
-    const userId = c.req.header('x-user-id') || 'temp-user';
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
 
     const conditions = await prisma.searchCondition.findMany({
       where: { userId },
@@ -1970,7 +3920,10 @@ app.get('/api/user/search-conditions', async (c) => {
  */
 app.post('/api/user/search-conditions', async (c) => {
   try {
-    const userId = c.req.header('x-user-id') || 'temp-user';
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
     const body = await c.req.json();
     const { name, cortarNo, regionName, realEstateTypes, tradeTypes, priceMin, priceMax, areaMin, areaMax, defaultOrder } = body;
 
@@ -2008,7 +3961,10 @@ app.post('/api/user/search-conditions', async (c) => {
  */
 app.post('/api/user/price-alerts', async (c) => {
   try {
-    const userId = c.req.header('x-user-id') || 'temp-user';
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
     const body = await c.req.json();
     const { name, articleNo, complexNo, cortarNo, alertType, targetPrice, changeRate } = body;
 
@@ -2043,7 +3999,10 @@ app.post('/api/user/price-alerts', async (c) => {
  */
 app.get('/api/user/price-alerts', async (c) => {
   try {
-    const userId = c.req.header('x-user-id') || 'temp-user';
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
 
     const alerts = await prisma.priceAlert.findMany({
       where: { userId },
@@ -2068,7 +4027,10 @@ app.get('/api/user/price-alerts', async (c) => {
  */
 app.get('/api/user/summary', async (c) => {
   try {
-    const userId = c.req.header('x-user-id') || 'temp-user';
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
 
     const [savedCount, alertCount, conditionCount] = await Promise.all([
       prisma.savedProperty.count({ where: { userId } }),
@@ -2098,7 +4060,10 @@ app.get('/api/user/summary', async (c) => {
  */
 app.get('/api/user/profile', async (c) => {
   try {
-    const userId = c.req.header('x-user-id') || 'temp-user';
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
 
     const user = await prisma.user.findUnique({
       where: { id: userId },
@@ -2137,7 +4102,10 @@ app.get('/api/user/profile', async (c) => {
  */
 app.put('/api/user/profile', async (c) => {
   try {
-    const userId = c.req.header('x-user-id') || 'temp-user';
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
     const body = await c.req.json();
     const { name, email, phone, zipCode, address, detailAddress, companyName, businessNumber } = body;
 
@@ -2184,7 +4152,10 @@ app.put('/api/user/profile', async (c) => {
  */
 app.delete('/api/user/profile', async (c) => {
   try {
-    const userId = c.req.header('x-user-id') || 'temp-user';
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
 
     await prisma.user.delete({
       where: { id: userId },
@@ -2381,17 +4352,19 @@ app.get('/api/proxy/naver-map', async (c) => {
  * GET /api/proxy/kakao-map
  * 카카오 맵 SDK 프록시 (CORS 우회)
  */
-app.get('/api/proxy/kakao-map', async (c) => {
+app.get('/api/proxy/kakao-map/*', async (c) => {
   try {
-    const appKey = process.env.VITE_KAKAO_MAP_APP_KEY || 'dedee21cec058fab2ff59137baaa0d1b';
-    const url = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${appKey}&autoload=false`;
+    const appKey = c.req.query('appkey') || process.env.VITE_KAKAO_MAP_APP_KEY || process.env.KAKAO_MAP_APP_KEY || 'dedee21cec058fab2ff59137baaa0d1b';
+    const libraries = c.req.query('libraries');
+    const autoload = c.req.query('autoload') || 'false';
+    const url = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${appKey}&autoload=${autoload}${libraries ? `&libraries=${libraries}` : ''}`;
 
-    console.log('[Kakao Map Proxy] Fetching from:', url);
+    const upstreamHeaders: Record<string, string> = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    };
+
     const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Referer': 'https://developers.kakao.com/',
-      },
+      headers: upstreamHeaders,
     });
 
     if (!response.ok) {
@@ -2402,10 +4375,18 @@ app.get('/api/proxy/kakao-map', async (c) => {
     }
 
     const content = await response.text();
-    console.log('[Kakao Map Proxy] Content length:', content.length);
-
+    const appKeyLiteral = JSON.stringify(appKey);
+    const patchedContentStep1 = content.replace(
+      /m=l\.appkey,m&&\(e\.apikey=m\),e\.version=/,
+      `m=l.appkey||${appKeyLiteral},m&&(e.apikey=m),e.version=`
+    );
+    const patchedContentStep2 = patchedContentStep1.replace(
+      /m=l\.appkey,m&&\(e\.apikey=m\)/,
+      `m=l.appkey||${appKeyLiteral},m&&(e.apikey=m)`
+    );
+    const patchedContent = patchedContentStep2;
     // JavaScript로 반환하고 CORS 헤더 추가
-    return c.text(content, 200, {
+    return c.text(patchedContent, 200, {
       'Content-Type': 'application/javascript; charset=utf-8',
       'Access-Control-Allow-Origin': '*',
     });
@@ -2500,17 +4481,12 @@ app.put('/api/global-theme', async (c) => {
 
 app.get('/api/favorite-properties', async (c) => {
   try {
-    // 기본 사용자의 ID 찾기
-    const defaultUser = await prisma.user.findFirst({
-      where: { email: 'default@example.com' }
-    });
-
-    if (!defaultUser) {
-      return c.json({ success: true, properties: [] });
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
     }
-
     const properties = await prisma.favoriteProperty.findMany({
-      where: { userId: defaultUser.id },
+      where: { userId },
       orderBy: { createdAt: 'desc' },
     });
 
@@ -2522,26 +4498,12 @@ app.get('/api/favorite-properties', async (c) => {
 
 app.post('/api/favorite-properties', async (c) => {
   try {
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
     const body = await c.req.json();
     if (!body.articleName) return c.json({ error: '매물명은 필수입니다' }, 400);
-
-    // 기본 사용자 생성 또는 조회
-    let userId = body.userId;
-    if (!userId) {
-      let defaultUser = await prisma.user.findFirst({
-        where: { email: 'default@example.com' }
-      });
-      if (!defaultUser) {
-        defaultUser = await prisma.user.create({
-          data: {
-            email: 'default@example.com',
-            name: '기본 사용자',
-            provider: 'local',
-          }
-        });
-      }
-      userId = defaultUser.id;
-    }
 
     const property = await prisma.favoriteProperty.create({
       data: {
@@ -2565,13 +4527,24 @@ app.post('/api/favorite-properties', async (c) => {
 
 app.put('/api/favorite-properties/:id', async (c) => {
   try {
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
     const id = c.req.param('id');
     const body = await c.req.json();
     const updateData: any = {};
     for (const field of ['articleName', 'buildingName', 'address', 'propertyType', 'tradeType', 'price', 'area', 'notes']) {
       if (body[field] !== undefined) updateData[field] = body[field];
     }
-    const property = await prisma.favoriteProperty.update({ where: { id }, data: updateData });
+    const result = await prisma.favoriteProperty.updateMany({
+      where: { id, userId },
+      data: updateData,
+    });
+    if (result.count === 0) {
+      return c.json({ error: '관심매물을 찾을 수 없습니다.' }, 404);
+    }
+    const property = await prisma.favoriteProperty.findFirst({ where: { id, userId } });
     return c.json({ success: true, property });
   } catch (error) {
     return c.json({ error: error instanceof Error ? error.message : 'Failed to update' }, 500);
@@ -2580,8 +4553,15 @@ app.put('/api/favorite-properties/:id', async (c) => {
 
 app.delete('/api/favorite-properties/:id', async (c) => {
   try {
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
     const id = c.req.param('id');
-    await prisma.favoriteProperty.delete({ where: { id } });
+    const result = await prisma.favoriteProperty.deleteMany({ where: { id, userId } });
+    if (result.count === 0) {
+      return c.json({ error: '관심매물을 찾을 수 없습니다.' }, 404);
+    }
     return c.json({ success: true, message: 'Deleted' });
   } catch (error) {
     return c.json({ error: error instanceof Error ? error.message : 'Failed to delete' }, 500);
@@ -2602,12 +4582,16 @@ app.delete('/api/favorite-properties/:id', async (c) => {
  */
 app.get('/api/managed-properties', async (c) => {
   try {
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
     const renewalDays = c.req.query('renewalDays') ? parseInt(c.req.query('renewalDays')!) : undefined;
     const paymentType = c.req.query('paymentType');
     const paymentDays = c.req.query('paymentDays') ? parseInt(c.req.query('paymentDays')!) : undefined;
     const status = c.req.query('status') || 'active';
 
-    const where: any = {};
+    const where: any = { userId };
     if (status !== 'all') {
       where.status = status;
     }
@@ -2651,28 +4635,14 @@ app.get('/api/managed-properties', async (c) => {
  */
 app.post('/api/managed-properties', async (c) => {
   try {
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
     const body = await c.req.json();
 
     if (!body.articleName || !body.contractType || !body.contractDate || !body.contractEndDate) {
       return c.json({ error: '매물명, 거래유형, 계약시작일, 계약만료일은 필수입니다' }, 400);
-    }
-
-    // 기본 사용자 생성 또는 조회
-    let userId = body.userId;
-    if (!userId) {
-      let defaultUser = await prisma.user.findFirst({
-        where: { email: 'default@example.com' }
-      });
-      if (!defaultUser) {
-        defaultUser = await prisma.user.create({
-          data: {
-            email: 'default@example.com',
-            name: '기본 사용자',
-            provider: 'local',
-          }
-        });
-      }
-      userId = defaultUser.id;
     }
 
     const property = await prisma.managedProperty.create({
@@ -2717,6 +4687,10 @@ app.post('/api/managed-properties', async (c) => {
  */
 app.put('/api/managed-properties/:id', async (c) => {
   try {
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
     const id = c.req.param('id');
     const body = await c.req.json();
 
@@ -2744,10 +4718,14 @@ app.put('/api/managed-properties/:id', async (c) => {
       }
     }
 
-    const property = await prisma.managedProperty.update({
-      where: { id },
+    const result = await prisma.managedProperty.updateMany({
+      where: { id, userId },
       data: updateData,
     });
+    if (result.count === 0) {
+      return c.json({ error: '관리매물을 찾을 수 없습니다.' }, 404);
+    }
+    const property = await prisma.managedProperty.findFirst({ where: { id, userId } });
 
     return c.json({ success: true, property });
   } catch (error) {
@@ -2762,8 +4740,15 @@ app.put('/api/managed-properties/:id', async (c) => {
  */
 app.delete('/api/managed-properties/:id', async (c) => {
   try {
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
     const id = c.req.param('id');
-    await prisma.managedProperty.delete({ where: { id } });
+    const result = await prisma.managedProperty.deleteMany({ where: { id, userId } });
+    if (result.count === 0) {
+      return c.json({ error: '관리매물을 찾을 수 없습니다.' }, 404);
+    }
     return c.json({ success: true, message: 'Deleted' });
   } catch (error) {
     console.error('Managed property delete error:', error);
@@ -2781,14 +4766,10 @@ app.delete('/api/managed-properties/:id', async (c) => {
  */
 app.get('/api/dashboard/summary', async (c) => {
   try {
-    const userId = c.req.header('x-user-id') || 'temp-user';
-
-    // 사용자 자동 생성
-    await prisma.user.upsert({
-      where: { id: userId },
-      update: {},
-      create: { id: userId, name: userId, provider: 'local' },
-    });
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
 
     const [totalProperties, favoriteCount, managedCount] = await Promise.all([
       prisma.property.count(),
@@ -2809,11 +4790,18 @@ app.get('/api/dashboard/summary', async (c) => {
  */
 app.get('/api/dashboard/recent-properties', async (c) => {
   try {
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
     const days = parseInt(c.req.query('days') || '10');
     const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
     const properties = await prisma.property.findMany({
-      where: { createdAt: { gte: startDate } },
+      where: {
+        userId,
+        createdAt: { gte: startDate },
+      },
       orderBy: { createdAt: 'desc' },
       select: {
         articleNo: true,
@@ -2840,7 +4828,10 @@ app.get('/api/dashboard/recent-properties', async (c) => {
  */
 app.get('/api/dashboard/recent-favorites', async (c) => {
   try {
-    const userId = c.req.header('x-user-id') || 'temp-user';
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
     const days = parseInt(c.req.query('days') || '10');
     const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
@@ -2862,7 +4853,10 @@ app.get('/api/dashboard/recent-favorites', async (c) => {
  */
 app.get('/api/dashboard/recent-managed', async (c) => {
   try {
-    const userId = c.req.header('x-user-id') || 'temp-user';
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
     const days = parseInt(c.req.query('days') || '10');
     const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
@@ -2884,7 +4878,10 @@ app.get('/api/dashboard/recent-managed', async (c) => {
  */
 app.get('/api/dashboard/recent-contracts', async (c) => {
   try {
-    const userId = c.req.header('x-user-id') || 'temp-user';
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
     const days = parseInt(c.req.query('days') || '30');
     const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
@@ -2911,16 +4908,12 @@ app.get('/api/dashboard/recent-contracts', async (c) => {
  */
 app.get('/api/schedules', async (c) => {
   try {
-    const userId = c.req.header('x-user-id') || 'temp-user';
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
     const startDate = c.req.query('startDate');
     const endDate = c.req.query('endDate');
-
-    // 사용자 자동 생성
-    await prisma.user.upsert({
-      where: { id: userId },
-      update: {},
-      create: { id: userId, name: userId, provider: 'local' },
-    });
 
     const whereClause: any = { userId };
     if (startDate && endDate) {
@@ -2948,14 +4941,10 @@ app.get('/api/schedules', async (c) => {
  */
 app.get('/api/schedules/today', async (c) => {
   try {
-    const userId = c.req.header('x-user-id') || 'temp-user';
-
-    // 사용자 자동 생성
-    await prisma.user.upsert({
-      where: { id: userId },
-      update: {},
-      create: { id: userId, name: userId, provider: 'local' },
-    });
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
 
     const today = new Date();
     const startOfDay = new Date(today);
@@ -2984,7 +4973,10 @@ app.get('/api/schedules/today', async (c) => {
  */
 app.post('/api/schedules', async (c) => {
   try {
-    const userId = c.req.header('x-user-id') || 'temp-user';
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
     const body = await c.req.json();
 
     const schedule = await prisma.schedule.create({
@@ -3014,11 +5006,23 @@ app.post('/api/schedules', async (c) => {
  */
 app.put('/api/schedules/:id', async (c) => {
   try {
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
     const id = c.req.param('id');
     const body = await c.req.json();
 
+    const existing = await prisma.schedule.findFirst({
+      where: { id, userId },
+      select: { id: true },
+    });
+    if (!existing) {
+      return c.json({ error: '일정을 찾을 수 없습니다.' }, 404);
+    }
+
     const schedule = await prisma.schedule.update({
-      where: { id },
+      where: { id: existing.id },
       data: {
         title: body.title,
         description: body.description,
@@ -3044,8 +5048,17 @@ app.put('/api/schedules/:id', async (c) => {
  */
 app.delete('/api/schedules/:id', async (c) => {
   try {
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
     const id = c.req.param('id');
-    await prisma.schedule.delete({ where: { id } });
+    const result = await prisma.schedule.deleteMany({
+      where: { id, userId },
+    });
+    if (result.count === 0) {
+      return c.json({ error: '일정을 찾을 수 없습니다.' }, 404);
+    }
     return c.json({ success: true, message: 'Deleted' });
   } catch (error) {
     console.error('Schedule delete error:', error);
@@ -3116,4 +5129,3 @@ export default {
 };
 
 console.log(`[Server] Running on port ${PORT} (${isProduction ? 'PRODUCTION' : 'DEVELOPMENT'})`);
-
