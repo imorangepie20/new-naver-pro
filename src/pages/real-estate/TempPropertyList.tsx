@@ -191,7 +191,9 @@ const TempPropertyList = () => {
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = `${complexName || '매물'}_${new Date().toISOString().slice(0, 10)}.csv`;
+    const now = new Date();
+    const timestampStr = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`;
+    link.download = `${complexName || '매물'}_${timestampStr}.csv`;
     link.click();
   };
 

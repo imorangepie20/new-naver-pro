@@ -45,6 +45,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useHotkeys } from 'react-hotkeys-hook'
 import HudCard from '../components/common/HudCard'
 import Button from '../components/common/Button'
+import { useAuthStore } from '../stores/authStore'
 import { API_BASE } from '../lib/api'
 import { isHoliday, getHolidaysInMonth, type Holiday } from '../lib/korean-holidays'
 
@@ -989,6 +990,7 @@ const ScheduleModal = ({ isOpen, onClose, onSave, onDelete, schedule, selectedDa
 // ============================================
 
 const Calendar = () => {
+    const authFetch = useAuthStore((state) => state.authFetch)
     const [currentDate, setCurrentDate] = useState(new Date())
     const [viewType, setViewType] = useState<ViewType>('month')
     const [schedules, setSchedules] = useState<Schedule[]>([])
@@ -1024,14 +1026,10 @@ const Calendar = () => {
     const fetchSchedules = async () => {
         setIsLoading(true)
         try {
-            const headers = { 'x-user-id': 'temp-user' }
             const startDate = startOfWeek(currentDate, { weekStartsOn: 0 })
             const endDate = addDays(endOfWeek(currentDate, { weekStartsOn: 0 }), 30)
 
-            const res = await fetch(
-                `${API_BASE}/api/schedules?startDate=${startDate.toISOString()}&endDate=${endDate.toISOString()}`,
-                { headers }
-            )
+            const res = await authFetch(`${API_BASE}/api/schedules?startDate=${startDate.toISOString()}&endDate=${endDate.toISOString()}`)
 
             if (res.ok) {
                 const data = await res.json()
@@ -1057,11 +1055,6 @@ const Calendar = () => {
     // 일정 저장
     const handleSaveSchedule = async (formData: ScheduleFormData) => {
         try {
-            const headers = {
-                'x-user-id': 'temp-user',
-                'Content-Type': 'application/json',
-            }
-
             const body = {
                 ...formData,
                 endTime: formData.endTime || null,
@@ -1071,15 +1064,19 @@ const Calendar = () => {
 
             let res
             if (editingSchedule) {
-                res = await fetch(`${API_BASE}/api/schedules/${editingSchedule.id}`, {
+                res = await authFetch(`${API_BASE}/api/schedules/${editingSchedule.id}`, {
                     method: 'PUT',
-                    headers,
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
                     body: JSON.stringify(body),
                 })
             } else {
-                res = await fetch(`${API_BASE}/api/schedules`, {
+                res = await authFetch(`${API_BASE}/api/schedules`, {
                     method: 'POST',
-                    headers,
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
                     body: JSON.stringify(body),
                 })
             }
@@ -1098,10 +1095,8 @@ const Calendar = () => {
     // 일정 삭제
     const handleDeleteSchedule = async (id: string) => {
         try {
-            const headers = { 'x-user-id': 'temp-user' }
-            const res = await fetch(`${API_BASE}/api/schedules/${id}`, {
+            const res = await authFetch(`${API_BASE}/api/schedules/${id}`, {
                 method: 'DELETE',
-                headers,
             })
 
             if (res.ok) {

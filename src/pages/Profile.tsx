@@ -14,14 +14,6 @@ import HudCard from '../components/common/HudCard'
 import Button from '../components/common/Button'
 import { useProfileStore } from '../stores/profileStore'
 
-const skills = [
-    { name: 'React', level: 95 },
-    { name: 'TypeScript', level: 90 },
-    { name: 'Node.js', level: 85 },
-    { name: 'Python', level: 75 },
-    { name: 'AWS', level: 70 },
-]
-
 const projects = [
     { name: '부동산 매물 관리', status: 'Active', progress: 100 },
     { name: '스마트 캘린더', status: 'Completed', progress: 100 },
@@ -33,6 +25,7 @@ const Profile = () => {
     const location = useLocation()
     const { profile, isLoading, fetchProfile } = useProfileStore()
     const [isRefreshing, setIsRefreshing] = useState(false)
+    const fromRegister = new URLSearchParams(location.search).get('from') === 'register'
 
     // 페이지가 보일 때마다 데이터 갱신
     useEffect(() => {
@@ -62,6 +55,23 @@ const Profile = () => {
 
     return (
         <div className="space-y-6 animate-fade-in">
+            {fromRegister && (
+                <HudCard>
+                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                        <p className="text-sm text-hud-text-secondary">
+                            회원가입이 완료되었습니다. 프로필 편집에서 연락처, 사무실 주소, 사업자 정보를 입력해주세요.
+                        </p>
+                        <Button
+                            size="sm"
+                            variant="primary"
+                            onClick={() => navigate('/settings')}
+                        >
+                            프로필 편집으로 이동
+                        </Button>
+                    </div>
+                </HudCard>
+            )}
+
             {/* Profile Header */}
             <HudCard>
                 <div className="flex flex-col md:flex-row items-start md:items-center gap-6">
@@ -144,55 +154,6 @@ const Profile = () => {
                     ))}
                 </div>
             </HudCard>
-
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* About */}
-                <HudCard title="소개" className="lg:col-span-2">
-                    <p className="text-hud-text-secondary leading-relaxed">
-                        부동산 중개업무 전문 관리 시스템입니다.
-                        매물 등록, 관리, 계약 관리 등 업무 효율을 높이는 다양한 기능을 제공합니다.
-                    </p>
-
-                    <div className="grid grid-cols-2 gap-4 mt-6">
-                        <div className="flex items-center gap-3">
-                            <Briefcase size={18} className="text-hud-accent-primary" />
-                            <div>
-                                <p className="text-sm text-hud-text-muted">중개업소</p>
-                                <p className="text-sm text-hud-text-primary">{displayCompany}</p>
-                            </div>
-                        </div>
-                        {profile?.zipCode && (
-                            <div className="flex items-center gap-3">
-                                <MapPin size={18} className="text-hud-accent-primary" />
-                                <div>
-                                    <p className="text-sm text-hud-text-muted">우편번호</p>
-                                    <p className="text-sm text-hud-text-primary">{profile.zipCode}</p>
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                </HudCard>
-
-                {/* Skills */}
-                <HudCard title="시스템 기능">
-                    <div className="space-y-4">
-                        {skills.map((skill) => (
-                            <div key={skill.name}>
-                                <div className="flex justify-between text-sm mb-1.5">
-                                    <span className="text-hud-text-secondary">{skill.name}</span>
-                                    <span className="text-hud-text-primary font-mono">{skill.level}%</span>
-                                </div>
-                                <div className="h-2 bg-hud-bg-primary rounded-full overflow-hidden">
-                                    <div
-                                        className="h-full bg-gradient-to-r from-hud-accent-primary to-hud-accent-info rounded-full transition-all duration-500"
-                                        style={{ width: `${skill.level}%` }}
-                                    />
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </HudCard>
-            </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 {/* Projects */}

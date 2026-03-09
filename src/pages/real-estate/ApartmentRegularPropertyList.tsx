@@ -37,6 +37,8 @@ interface RegularArticle extends Article {
 
 const ApartmentRegularPropertyList = () => {
   const navigate = useNavigate();
+  const token = useAuthStore((state) => state.token);
+  const authFetch = useAuthStore((state) => state.authFetch);
 
   // 상태
   const [articles, setArticles] = useState<RegularArticle[]>([]);
@@ -73,15 +75,20 @@ const ApartmentRegularPropertyList = () => {
   // 서버에서 정규 매물 로드
   useEffect(() => {
     loadRegularArticles();
-  }, []);
+  }, [token]);
 
   const loadRegularArticles = async () => {
+    if (!token) {
+      setIsLoading(false);
+      return;
+    }
+
     setIsLoading(true);
     setError(null);
 
     try {
       // 중앙 DB에서 네이버 매물만 가져오기
-      const response = await fetch(`${API_BASE}/api/properties?dataSource=NAVER`);
+      const response = await authFetch(`${API_BASE}/api/properties?dataSource=NAVER`);
 
       if (!response.ok) {
         throw new Error('서버 조회 실패');
@@ -226,7 +233,7 @@ const ApartmentRegularPropertyList = () => {
   // 개별 삭제 (서버 API 호출)
   const deleteItem = async (id: string) => {
     try {
-      const response = await fetch(`${API_BASE}/api/properties/${id}`, {
+      const response = await authFetch(`${API_BASE}/api/properties/${id}`, {
         method: 'DELETE',
       });
 
@@ -257,7 +264,7 @@ const ApartmentRegularPropertyList = () => {
     try {
       // 개별 삭제 요청 병렬 처리
       const deletePromises = Array.from(selectedItems).map((id) =>
-        fetch(`${API_BASE}/api/properties/${id}`, { method: 'DELETE' })
+        authFetch(`${API_BASE}/api/properties/${id}`, { method: 'DELETE' })
       );
 
       const results = await Promise.allSettled(deletePromises);
@@ -306,7 +313,7 @@ const ApartmentRegularPropertyList = () => {
         const batch = articleNos.slice(i, Math.min(i + BATCH_SIZE, articleNos.length));
 
         const deletePromises = batch.map(async (id) => {
-          const response = await fetch(`${API_BASE}/api/properties/${id}`, {
+          const response = await authFetch(`${API_BASE}/api/properties/${id}`, {
             method: 'DELETE',
           });
           if (response.ok) {
@@ -451,8 +458,9 @@ const ApartmentRegularPropertyList = () => {
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    const dateStr = new Date().toISOString().slice(0, 10);
-    link.download = `정규매물_${dateStr}.csv`;
+    const now = new Date();
+    const timestampStr = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`;
+    link.download = `정규매물_${timestampStr}.csv`;
     link.click();
 
     return Promise.resolve();
@@ -996,8 +1004,9 @@ const ApartmentRegularPropertyList = () => {
 
       {/* 전체 삭제 진행 프로그래스 바 모달 */}
       {isDeletingAll && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 animate-fade-in">
-          <div className="bg-hud-bg-secondary border border-hud-border-primary rounded-2xl p-8 max-w-md w-full mx-4 shadow-2xl">
+        <div className="hud-modal-overlay">
+          <div className="hud-modal-backdrop" />
+          <div className="hud-modal-panel p-8 max-w-md w-full mx-4">
             <div className="flex flex-col items-center gap-6">
               {/* 애니메이션 아이콘 */}
               <div className="relative">

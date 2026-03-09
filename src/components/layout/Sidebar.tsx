@@ -38,6 +38,8 @@ const menuSections: MenuSection[] = [
         emoji: '⚡',
         items: [
             { title: 'Dashboard', icon: <LayoutDashboard size={20} />, path: '/', color: 'cyan' },
+            { title: '통계분석', icon: <BarChart3 size={20} />, path: '/real-estate/address-market-stats', color: 'amber' },
+            { title: 'REB 통계', icon: <BarChart3 size={20} />, path: '/real-estate/reb-market-stats', color: 'amber' },
             /*{ title: 'Analytics', icon: <BarChart3 size={20} />, path: '/analytics', color: 'amber' },*/
         ],
     },
@@ -202,7 +204,7 @@ const Sidebar = ({ collapsed }: SidebarProps) => {
                                                     onMouseLeave={() => setHoveredItem(null)}
                                                     className={`relative w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-300 ease-out
                                                         ${active
-                                                            ? `bg-white/20 backdrop-blur-xl text-white shadow-lg shadow-purple-900/30 ring-1 ring-white/30 border border-white/20`
+                                                            ? 'text-white'
                                                             : hovered
                                                                 ? 'bg-white/20 text-white shadow-md backdrop-blur-sm'
                                                                 : 'text-white/80 hover:text-white'
@@ -273,7 +275,7 @@ const Sidebar = ({ collapsed }: SidebarProps) => {
                                                 onMouseLeave={() => setHoveredItem(null)}
                                                 className={`relative flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-300 ease-out
                                                     ${active
-                                                        ? `bg-white/20 backdrop-blur-xl text-white shadow-lg shadow-purple-900/30 ring-1 ring-white/30 border border-white/20`
+                                                        ? 'text-white'
                                                         : hovered
                                                             ? 'bg-white/20 text-white shadow-md backdrop-blur-sm'
                                                             : 'text-white/80 hover:text-white'

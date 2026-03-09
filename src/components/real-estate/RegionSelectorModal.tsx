@@ -146,17 +146,17 @@ const RegionSelectorModal: React.FC<RegionSelectorModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="hud-modal-overlay">
       {/* 백드롭 */}
       <div
-        className="absolute inset-0 bg-hud-bg-overlay/80 backdrop-blur-sm animate-fade-in"
+        className="hud-modal-backdrop"
         onClick={handleClose}
       />
 
       {/* 모달 컨텐츠 */}
-      <div className="relative w-full max-w-2xl max-h-[85vh] bg-hud-bg-secondary border border-hud-border-primary rounded-lg shadow-hud-lg flex flex-col animate-scale-in">
+      <div className="hud-modal-panel w-full max-w-2xl max-h-[85vh] flex flex-col">
         {/* 헤더 */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-hud-border-secondary">
+        <div className="hud-modal-header px-5">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-hud-accent-primary/10 rounded-lg">
               <MapPin className="w-5 h-5 text-hud-accent-primary" />
@@ -168,7 +168,7 @@ const RegionSelectorModal: React.FC<RegionSelectorModalProps> = ({
           </div>
           <button
             onClick={handleClose}
-            className="p-2 hover:bg-hud-bg-hover rounded-lg transition-colors group"
+            className="hud-modal-close group"
           >
             <X className="w-5 h-5 text-hud-text-muted group-hover:text-hud-text-primary" />
           </button>
@@ -271,7 +271,7 @@ const RegionSelectorModal: React.FC<RegionSelectorModalProps> = ({
         </div>
 
         {/* 푸터 */}
-        <div className="flex items-center justify-between px-5 py-4 border-t border-hud-border-secondary bg-hud-bg-primary/30">
+        <div className="hud-modal-footer justify-between px-5">
           <div className="text-sm text-hud-text-muted">
             {selectedPath.length > 0 ? (
               <span>

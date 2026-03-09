@@ -28,6 +28,7 @@ import Button from '../../components/common/Button';
 import { API_BASE } from '../../lib/api';
 import { parsePropertiesWithClaude, ParsedProperty as LLMParsedProperty } from '../../lib/llm';
 import { extractPropertiesFromText } from '../../lib/local-llm';
+import { useAuthStore } from '../../stores/authStore';
 
 // ============================================
 // 타입 정의
@@ -70,6 +71,7 @@ interface ParseResult {
 
 const PropertyRegister = () => {
     const navigate = useNavigate();
+    const authFetch = useAuthStore((state) => state.authFetch);
 
     // State
     const [file, setFile] = useState<File | null>(null);
@@ -1038,7 +1040,7 @@ const PropertyRegister = () => {
             }));
 
             // 중앙 DB에만 저장
-            const response = await fetch(`${API_BASE}/api/properties/bulk`, {
+            const response = await authFetch(`${API_BASE}/api/properties/bulk`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

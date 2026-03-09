@@ -4,7 +4,6 @@
 
 import { useState } from 'react';
 import { X, Download, Check } from 'lucide-react';
-import HudCard from '../common/HudCard';
 import Button from '../common/Button';
 
 // 필드 정의
@@ -98,10 +97,11 @@ const ExcelExportModal: React.FC<ExcelExportModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <HudCard className="w-full max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
+    <div className="hud-modal-overlay">
+      <div className="hud-modal-backdrop" onClick={onClose} />
+      <div className="hud-modal-panel w-full max-w-2xl max-h-[86vh] flex flex-col">
         {/* 헤더 */}
-        <div className="flex items-center justify-between p-4 border-b border-hud-border-secondary">
+        <div className="hud-modal-header">
           <div>
             <h2 className="text-lg font-semibold text-hud-text-primary">{title}</h2>
             <p className="text-sm text-hud-text-muted">
@@ -110,14 +110,14 @@ const ExcelExportModal: React.FC<ExcelExportModalProps> = ({
           </div>
           <button
             onClick={onClose}
-            className="p-1 hover:bg-hud-bg-hover rounded transition-colors"
+            className="hud-modal-close"
           >
             <X className="w-5 h-5 text-hud-text-muted" />
           </button>
         </div>
 
         {/* 필드 목록 */}
-        <div className="flex-1 overflow-y-auto p-4">
+        <div className="hud-modal-body flex-1 overflow-y-auto">
           <div className="flex items-center justify-between mb-4">
             <button
               onClick={toggleSelectAll}
@@ -139,10 +139,10 @@ const ExcelExportModal: React.FC<ExcelExportModalProps> = ({
                 key={field.key}
                 onClick={() => toggleField(field.key)}
                 className={`
-                  flex items-center gap-2 p-3 rounded-lg border transition-all text-left
+                  flex items-center gap-2 p-3 rounded-xl border transition-all text-left
                   ${selectedFields.has(field.key)
-                    ? 'bg-hud-accent-primary/10 border-hud-accent-primary text-hud-text-primary'
-                    : 'bg-hud-bg-secondary border-hud-border-secondary text-hud-text-secondary hover:bg-hud-bg-hover'
+                    ? 'bg-gradient-to-br from-hud-accent-primary/20 to-hud-accent-primary/5 border-hud-accent-primary/80 text-hud-text-primary shadow-[0_8px_20px_rgba(var(--hud-accent-primary-rgb,0,255,204),0.12)]'
+                    : 'bg-hud-bg-secondary/70 border-hud-border-secondary text-hud-text-secondary hover:bg-hud-bg-hover'
                   }
                 `}
               >
@@ -164,7 +164,7 @@ const ExcelExportModal: React.FC<ExcelExportModalProps> = ({
         </div>
 
         {/* 푸터 */}
-        <div className="flex items-center justify-end gap-2 p-4 border-t border-hud-border-secondary bg-hud-bg-secondary">
+        <div className="hud-modal-footer">
           <Button
             variant="ghost"
             onClick={onClose}
@@ -191,7 +191,7 @@ const ExcelExportModal: React.FC<ExcelExportModalProps> = ({
             {isExporting ? '내보내는 중...' : '엑셀 다운로드'}
           </Button>
         </div>
-      </HudCard>
+      </div>
     </div>
   );
 };

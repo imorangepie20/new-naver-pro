@@ -5,7 +5,10 @@
 import { Hono } from 'hono';
 import { sign, verify } from 'hono/jwt';
 import bcrypt from 'bcryptjs';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
+import { loadProjectEnv } from '../lib/env/load-project-env';
+
+loadProjectEnv();
 
 const prisma = new PrismaClient();
 const auth = new Hono();
@@ -14,16 +17,29 @@ const auth = new Hono();
 const JWT_SECRET = process.env.JWT_SECRET || 'naver-land-secret-key-change-in-production';
 const JWT_EXPIRES_IN = 60 * 60 * 24 * 7; // 7일 (초 단위)
 
+function normalizeEmail(value: unknown) {
+    return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
 /**
  * POST /api/auth/register
  * 회원가입
  */
 auth.post('/register', async (c) => {
     try {
-        const { email, password, name } = await c.req.json();
+        const body = await c.req.json();
+        const email = normalizeEmail(body?.email);
+        const password = typeof body?.password === 'string' ? body.password : '';
+        const name = typeof body?.name === 'string' ? body.name.trim() : '';
 
         if (!email || !password) {
             return c.json({ error: '이메일과 비밀번호를 입력해주세요.' }, 400);
+        }
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+            return c.json({ error: '올바른 이메일 형식이 아닙니다.' }, 400);
+        }
+        if (password.length < 6) {
+            return c.json({ error: '비밀번호는 최소 6자 이상이어야 합니다.' }, 400);
         }
 
         // 이메일 중복 확인
@@ -48,13 +64,19 @@ auth.post('/register', async (c) => {
 
         // JWT 토큰 생성
         const token = await sign(
-            { sub: user.id, email: user.email, exp: Math.floor(Date.now() / 1000) + JWT_EXPIRES_IN },
+            { sub: user.id, email: user.email ?? email, exp: Math.floor(Date.now() / 1000) + JWT_EXPIRES_IN },
             JWT_SECRET
         );
 
         return c.json({ success: true, user, token });
     } catch (error) {
         console.error('Register error:', error);
+        if (error instanceof Prisma.PrismaClientInitializationError) {
+            return c.json({ error: '데이터베이스 연결에 실패했습니다. DB 서버 상태를 확인해주세요.' }, 503);
+        }
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+            return c.json({ error: '이미 가입된 이메일입니다.' }, 409);
+        }
         return c.json({ error: '회원가입에 실패했습니다.' }, 500);
     }
 });
@@ -65,7 +87,9 @@ auth.post('/register', async (c) => {
  */
 auth.post('/login', async (c) => {
     try {
-        const { email, password } = await c.req.json();
+        const body = await c.req.json();
+        const email = normalizeEmail(body?.email);
+        const password = typeof body?.password === 'string' ? body.password : '';
 
         if (!email || !password) {
             return c.json({ error: '이메일과 비밀번호를 입력해주세요.' }, 400);
@@ -102,6 +126,9 @@ auth.post('/login', async (c) => {
         });
     } catch (error) {
         console.error('Login error:', error);
+        if (error instanceof Prisma.PrismaClientInitializationError) {
+            return c.json({ error: '데이터베이스 연결에 실패했습니다. DB 서버 상태를 확인해주세요.' }, 503);
+        }
         return c.json({ error: '로그인에 실패했습니다.' }, 500);
     }
 });

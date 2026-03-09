@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { API_BASE } from '../lib/api'
+import { useAuthStore } from './authStore'
 
 export interface ProfileData {
     name: string
@@ -43,8 +44,8 @@ export const useProfileStore = create<ProfileStore>()(
             fetchProfile: async () => {
                 set({ isLoading: true, error: null })
                 try {
-                    const headers = { 'x-user-id': 'temp-user' }
-                    const res = await fetch(`${API_BASE}/api/user/profile`, { headers })
+                    const authFetch = useAuthStore.getState().authFetch
+                    const res = await authFetch(`${API_BASE}/api/user/profile`)
 
                     if (res.ok) {
                         const data = await res.json()
@@ -74,13 +75,12 @@ export const useProfileStore = create<ProfileStore>()(
 
                 set({ isLoading: true, error: null })
                 try {
-                    const headers = {
-                        'x-user-id': 'temp-user',
-                        'Content-Type': 'application/json',
-                    }
-                    const res = await fetch(`${API_BASE}/api/user/profile`, {
+                    const authFetch = useAuthStore.getState().authFetch
+                    const res = await authFetch(`${API_BASE}/api/user/profile`, {
                         method: 'PUT',
-                        headers,
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
                         body: JSON.stringify(updatedProfile),
                     })
 

@@ -1,0 +1,28 @@
+[Unit]
+Description=ImApplePie API (Bun/Hono)
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 실제 서버 사용자로 변경하세요.
+User=ubuntu
+Group=ubuntu
+
+# 실제 프로젝트 경로로 변경하세요.
+WorkingDirectory=/opt/imapplepieTemplate001
+
+Environment=NODE_ENV=production
+Environment=PORT=3001
+
+# 선택: 민감정보는 별도 env 파일 사용 권장
+# EnvironmentFile=/etc/imapplepie/imapplepie.env
+
+ExecStart=/usr/bin/env bun run src/server/index.ts
+Restart=always
+RestartSec=3
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target
+

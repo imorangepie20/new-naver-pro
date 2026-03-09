@@ -68,6 +68,8 @@ import UploadedPropertyList from './pages/real-estate/UploadedPropertyList'
 import PropertyRegister from './pages/real-estate/PropertyRegister'
 import FavoritePropertyList from './pages/real-estate/FavoritePropertyList'
 import ManagedPropertyList from './pages/real-estate/ManagedPropertyList'
+import AddressMarketStats from './pages/real-estate/AddressMarketStats'
+import RebMarketStats from './pages/real-estate/RebMarketStats'
 
 // Misc Pages
 import Error404 from './pages/Error404'
@@ -77,34 +79,12 @@ import ComingSoon from './pages/ComingSoon'
 import PrivateRoute from './components/auth/PrivateRoute'
 
 function App() {
-    const { mode, getEffectiveMode, loadFromServer } = useThemeStore()
+    const { loadFromServer } = useThemeStore()
 
     // 앱 시작 시 서버에서 글로벌 테마 로드
     useEffect(() => {
         loadFromServer()
     }, [])
-
-    // Handle system theme changes
-    useEffect(() => {
-        const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
-
-        const handleChange = () => {
-            if (mode === 'system') {
-                const effectiveMode = getEffectiveMode()
-                const root = document.documentElement
-                root.classList.remove('light', 'dark', 'smart')
-                root.classList.add(effectiveMode)
-            }
-        }
-
-        // Listen for OS theme changes
-        mediaQuery.addEventListener('change', handleChange)
-
-        // Also apply the correct class initially or when mode changes
-        handleChange()
-
-        return () => mediaQuery.removeEventListener('change', handleChange)
-    }, [mode, getEffectiveMode])
 
     return (
         <Router>
@@ -178,6 +158,8 @@ function App() {
                     <Route path="real-estate/register" element={<PropertyRegister />} />
                     <Route path="real-estate/favorites" element={<FavoritePropertyList />} />
                     <Route path="real-estate/managed" element={<ManagedPropertyList />} />
+                    <Route path="real-estate/address-market-stats" element={<AddressMarketStats />} />
+                    <Route path="real-estate/reb-market-stats" element={<RebMarketStats />} />
                 </Route>
 
                 {/* 404 Fallback */}

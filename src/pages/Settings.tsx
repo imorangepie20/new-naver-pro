@@ -28,6 +28,7 @@ import {
 import HudCard from '../components/common/HudCard'
 import Button from '../components/common/Button'
 import { useThemeStore, AccentColor, ThemeMode, FontSize, BorderRadius, ACCENT_COLORS } from '../stores/themeStore'
+import { useAuthStore } from '../stores/authStore'
 import { API_BASE } from '../lib/api'
 
 const settingsSections = [
@@ -76,6 +77,7 @@ interface ProfileData {
 }
 
 const ProfileSection = () => {
+    const authFetch = useAuthStore((state) => state.authFetch)
     const [profile, setProfile] = useState<ProfileData>({
         name: '',
         email: '',
@@ -95,8 +97,7 @@ const ProfileSection = () => {
     useEffect(() => {
         const fetchProfile = async () => {
             try {
-                const headers = { 'x-user-id': 'temp-user' }
-                const res = await fetch(`${API_BASE}/api/user/profile`, { headers })
+                const res = await authFetch(`${API_BASE}/api/user/profile`)
 
                 if (res.ok) {
                     const data = await res.json()
@@ -127,13 +128,11 @@ const ProfileSection = () => {
         setSaveMessage(null)
 
         try {
-            const headers = {
-                'x-user-id': 'temp-user',
-                'Content-Type': 'application/json',
-            }
-            const res = await fetch(`${API_BASE}/api/user/profile`, {
+            const res = await authFetch(`${API_BASE}/api/user/profile`, {
                 method: 'PUT',
-                headers,
+                headers: {
+                    'Content-Type': 'application/json',
+                },
                 body: JSON.stringify(profile),
             })
 
@@ -188,6 +187,14 @@ const ProfileSection = () => {
         }
     }, [showDaumPostcode])
 
+    const inputClassName =
+        'w-full px-4 py-2.5 bg-hud-bg-primary border border-hud-border-primary rounded-lg text-hud-text-primary placeholder:text-hud-text-muted focus:outline-none focus:border-hud-accent-primary focus:ring-1 focus:ring-hud-accent-primary transition-hud'
+    const readOnlyInputClassName =
+        'w-full px-4 py-2.5 bg-hud-bg-secondary border border-hud-border-secondary rounded-lg text-hud-text-secondary cursor-not-allowed'
+    const requiredValues = [profile.name, profile.phone, profile.companyName, profile.zipCode, profile.address]
+    const completedRequired = requiredValues.filter((value) => value.trim().length > 0).length
+    const profileCompletion = Math.round((completedRequired / requiredValues.length) * 100)
+
     if (isLoading) {
         return (
             <HudCard title="프로필 설정" subtitle="중개사 정보를 관리하세요">
@@ -218,8 +225,28 @@ const ProfileSection = () => {
                 </div>
             )}
 
+            <HudCard className="p-0 overflow-hidden">
+                <div className="px-5 py-4 bg-gradient-to-r from-hud-accent-primary/10 via-transparent to-hud-accent-info/10 border-b border-hud-border-secondary">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                        <div>
+                            <p className="text-sm font-semibold text-hud-text-primary">프로필 완성도</p>
+                            <p className="text-xs text-hud-text-muted mt-1">
+                                필수 항목 {completedRequired}/{requiredValues.length} 입력 완료
+                            </p>
+                        </div>
+                        <div className="text-sm font-semibold text-hud-accent-primary">{profileCompletion}%</div>
+                    </div>
+                    <div className="mt-3 h-2 rounded-full bg-hud-bg-primary border border-hud-border-secondary overflow-hidden">
+                        <div
+                            className="h-full bg-gradient-to-r from-hud-accent-primary to-hud-accent-info transition-all duration-500"
+                            style={{ width: `${profileCompletion}%` }}
+                        />
+                    </div>
+                </div>
+            </HudCard>
+
             {/* 기본 정보 카드 */}
-            <HudCard title="기본 정보" subtitle="이름과 연락처 정보를 입력하세요">
+            <HudCard title="기본 정보" subtitle="계정 및 연락처 정보를 확인하세요">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                         <label className="flex items-center gap-2 text-sm font-medium text-hud-text-secondary mb-2">
@@ -231,21 +258,23 @@ const ProfileSection = () => {
                             value={profile.name}
                             onChange={(e) => setProfile({ ...profile, name: e.target.value })}
                             placeholder="홍길동"
-                            className="w-full px-4 py-2.5 bg-hud-bg-primary border border-hud-border-primary rounded-lg text-hud-text-primary placeholder:text-hud-text-muted focus:outline-none focus:border-hud-accent-primary focus:ring-1 focus:ring-hud-accent-primary"
+                            className={inputClassName}
                         />
                     </div>
                     <div>
                         <label className="flex items-center gap-2 text-sm font-medium text-hud-text-secondary mb-2">
                             <Mail size={16} />
-                            이메일 *
+                            이메일
                         </label>
                         <input
                             type="email"
                             value={profile.email}
-                            onChange={(e) => setProfile({ ...profile, email: e.target.value })}
-                            placeholder="example@email.com"
-                            className="w-full px-4 py-2.5 bg-hud-bg-primary border border-hud-border-primary rounded-lg text-hud-text-primary placeholder:text-hud-text-muted focus:outline-none focus:border-hud-accent-primary focus:ring-1 focus:ring-hud-accent-primary"
+                            readOnly
+                            className={readOnlyInputClassName}
                         />
+                        <p className="text-xs text-hud-text-muted mt-2">
+                            이메일은 로그인 계정 식별자로 사용되어 수정할 수 없습니다.
+                        </p>
                     </div>
                     <div className="md:col-span-2">
                         <label className="flex items-center gap-2 text-sm font-medium text-hud-text-secondary mb-2">
@@ -257,7 +286,7 @@ const ProfileSection = () => {
                             value={profile.phone}
                             onChange={(e) => setProfile({ ...profile, phone: e.target.value })}
                             placeholder="010-1234-5678"
-                            className="w-full px-4 py-2.5 bg-hud-bg-primary border border-hud-border-primary rounded-lg text-hud-text-primary placeholder:text-hud-text-muted focus:outline-none focus:border-hud-accent-primary focus:ring-1 focus:ring-hud-accent-primary"
+                            className={inputClassName}
                         />
                     </div>
                 </div>
@@ -276,7 +305,7 @@ const ProfileSection = () => {
                             value={profile.companyName}
                             onChange={(e) => setProfile({ ...profile, companyName: e.target.value })}
                             placeholder="OO부동산"
-                            className="w-full px-4 py-2.5 bg-hud-bg-primary border border-hud-border-primary rounded-lg text-hud-text-primary placeholder:text-hud-text-muted focus:outline-none focus:border-hud-accent-primary focus:ring-1 focus:ring-hud-accent-primary"
+                            className={inputClassName}
                         />
                     </div>
                     <div>
@@ -289,7 +318,7 @@ const ProfileSection = () => {
                             value={profile.businessNumber}
                             onChange={(e) => setProfile({ ...profile, businessNumber: e.target.value })}
                             placeholder="123-45-67890"
-                            className="w-full px-4 py-2.5 bg-hud-bg-primary border border-hud-border-primary rounded-lg text-hud-text-primary placeholder:text-hud-text-muted focus:outline-none focus:border-hud-accent-primary focus:ring-1 focus:ring-hud-accent-primary"
+                            className={inputClassName}
                         />
                     </div>
 
@@ -306,15 +335,11 @@ const ProfileSection = () => {
                                     value={profile.zipCode}
                                     readOnly
                                     placeholder="우편번호"
-                                    className="flex-1 px-4 py-2.5 bg-hud-bg-primary border border-hud-border-primary rounded-lg text-hud-text-primary placeholder:text-hud-text-muted"
+                                    className={`${readOnlyInputClassName} flex-1`}
                                 />
-                                <button
-                                    type="button"
-                                    onClick={() => setShowDaumPostcode(true)}
-                                    className="px-4 py-2.5 bg-hud-accent-primary/20 hover:bg-hud-accent-primary/30 text-hud-accent-primary border border-hud-accent-primary/50 rounded-lg transition-hud text-sm font-medium whitespace-nowrap"
-                                >
+                                <Button type="button" variant="outline" onClick={() => setShowDaumPostcode(true)}>
                                     주소 검색
-                                </button>
+                                </Button>
                             </div>
                         </div>
                         <div className="md:col-span-2">
@@ -326,7 +351,7 @@ const ProfileSection = () => {
                                 value={profile.address}
                                 readOnly
                                 placeholder="주소 검색 후 자동 입력"
-                                className="w-full px-4 py-2.5 bg-hud-bg-primary border border-hud-border-primary rounded-lg text-hud-text-primary placeholder:text-hud-text-muted"
+                                className={readOnlyInputClassName}
                             />
                         </div>
                     </div>
@@ -339,14 +364,14 @@ const ProfileSection = () => {
                             value={profile.detailAddress}
                             onChange={(e) => setProfile({ ...profile, detailAddress: e.target.value })}
                             placeholder="동/호수 등 상세 주소 입력"
-                            className="w-full px-4 py-2.5 bg-hud-bg-primary border border-hud-border-primary rounded-lg text-hud-text-primary placeholder:text-hud-text-muted focus:outline-none focus:border-hud-accent-primary focus:ring-1 focus:ring-hud-accent-primary"
+                            className={inputClassName}
                         />
                     </div>
                 </div>
             </HudCard>
 
             {/* 저장 버튼 및 메시지 */}
-            <div className="flex items-center justify-between">
+            <div className="rounded-xl border border-hud-border-secondary bg-hud-bg-secondary/50 p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                 {saveMessage && (
                     <div className={`flex items-center gap-2 px-4 py-2 rounded-lg ${
                         saveMessage.type === 'success'
@@ -361,7 +386,7 @@ const ProfileSection = () => {
                         <span className="text-sm">{saveMessage.text}</span>
                     </div>
                 )}
-                <div className="ml-auto">
+                <div className="sm:ml-auto">
                     <Button
                         variant="primary"
                         glow
@@ -388,6 +413,7 @@ const ProfileSection = () => {
 // 데이터 관리 섹션 컴포넌트
 // ============================================
 const DataManagementSection = () => {
+    const authFetch = useAuthStore((state) => state.authFetch)
     const [isDeletingProfile, setIsDeletingProfile] = useState(false);
     const [isDeletingCalendar, setIsDeletingCalendar] = useState(false);
     const [deleteResult, setDeleteResult] = useState<{ type: 'profile' | 'calendar'; success: boolean } | null>(null);
@@ -400,9 +426,8 @@ const DataManagementSection = () => {
         setDeleteResult(null);
 
         try {
-            const response = await fetch(`${API_BASE}/api/user/profile`, {
+            const response = await authFetch(`${API_BASE}/api/user/profile`, {
                 method: 'DELETE',
-                headers: { 'x-user-id': 'temp-user' },
             });
 
             if (response.ok) {
@@ -429,9 +454,8 @@ const DataManagementSection = () => {
         setDeleteResult(null);
 
         try {
-            const response = await fetch(`${API_BASE}/api/user/calendar`, {
+            const response = await authFetch(`${API_BASE}/api/user/calendar`, {
                 method: 'DELETE',
-                headers: { 'x-user-id': 'temp-user' },
             });
 
             if (response.ok) {

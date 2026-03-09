@@ -30,6 +30,7 @@ import HudCard from '../../components/common/HudCard';
 import Button from '../../components/common/Button';
 import ExcelExportModal, { EXPORT_FIELDS, ExportFieldKey } from '../../components/real-estate/ExcelExportModal';
 import type { Article } from '../../types/naver-land';
+import { useAuthStore } from '../../stores/authStore';
 
 const ITEMS_PER_PAGE = 50;
 import { API_BASE } from '../../lib/api';
@@ -46,6 +47,8 @@ interface UploadedArticle extends Article {
 
 const UploadedPropertyList = () => {
   const navigate = useNavigate();
+  const token = useAuthStore((state) => state.token);
+  const authFetch = useAuthStore((state) => state.authFetch);
 
   // 상태
   const [articles, setArticles] = useState<UploadedArticle[]>([]);
@@ -129,15 +132,46 @@ const UploadedPropertyList = () => {
 
   // 서버에서 업로드 매물 로드
   useEffect(() => {
-    loadUploadedArticles();
-    loadFavoriteProperties();
-    loadManagedProperties();
-  }, []);
+    if (!token) return;
+    const initialize = async () => {
+      await backfillLegacyUploadedOwnership();
+      await Promise.all([
+        loadUploadedArticles(),
+        loadFavoriteProperties(),
+        loadManagedProperties(),
+      ]);
+    };
+
+    initialize();
+  }, [token]);
+
+  // 기존 userId=null 업로드 매물을 현재 사용자에게 귀속
+  const backfillLegacyUploadedOwnership = async () => {
+    try {
+      const response = await authFetch(`${API_BASE}/api/properties/backfill-user`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dataSource: 'UPLOAD' }),
+      });
+
+      if (!response.ok) {
+        console.warn('업로드 매물 소유권 백필 실패:', response.status);
+        return;
+      }
+
+      const data = await response.json();
+      if (data.updatedCount > 0) {
+        console.log(`[Uploaded] legacy ownership backfilled: ${data.updatedCount}`);
+      }
+    } catch (error) {
+      console.error('업로드 매물 소유권 백필 실패:', error);
+    }
+  };
 
   // 관심매물 목록 로드
   const loadFavoriteProperties = async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/favorite-properties`);
+      const response = await authFetch(`${API_BASE}/api/favorite-properties`);
       if (response.ok) {
         const data = await response.json();
         const favorites = data.properties || [];
@@ -163,7 +197,7 @@ const UploadedPropertyList = () => {
   // 관리매물 목록 로드
   const loadManagedProperties = async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/managed-properties`);
+      const response = await authFetch(`${API_BASE}/api/managed-properties`);
       if (response.ok) {
         const data = await response.json();
         const managed = data.properties || [];
@@ -189,7 +223,7 @@ const UploadedPropertyList = () => {
 
     try {
       // 중앙 DB에서 업로드 매물만 가져오기
-      const response = await fetch(`${API_BASE}/api/properties?dataSource=UPLOAD`);
+      const response = await authFetch(`${API_BASE}/api/properties?dataSource=UPLOAD`);
 
       if (!response.ok) {
         throw new Error('서버 조회 실패');
@@ -350,7 +384,7 @@ const UploadedPropertyList = () => {
     if (!confirm('이 매물을 삭제하시겠습니까?')) return;
 
     try {
-      const response = await fetch(`${API_BASE}/api/properties/${id}`, {
+      const response = await authFetch(`${API_BASE}/api/properties/${id}`, {
         method: 'DELETE',
       });
 
@@ -381,7 +415,7 @@ const UploadedPropertyList = () => {
     try {
       // 개별 삭제 요청 병렬 처리
       const deletePromises = Array.from(selectedItems).map((id) =>
-        fetch(`${API_BASE}/api/properties/${id}`, { method: 'DELETE' })
+        authFetch(`${API_BASE}/api/properties/${id}`, { method: 'DELETE' })
       );
 
       const results = await Promise.allSettled(deletePromises);
@@ -422,7 +456,7 @@ const UploadedPropertyList = () => {
       let deletedCount = 0;
 
       for (const id of articleNos) {
-        const response = await fetch(`${API_BASE}/api/properties/${id}`, {
+        const response = await authFetch(`${API_BASE}/api/properties/${id}`, {
           method: 'DELETE',
         });
         if (response.ok) deletedCount++;
@@ -455,7 +489,7 @@ const UploadedPropertyList = () => {
       }
 
       try {
-        const response = await fetch(`${API_BASE}/api/favorite-properties/${favoritePropertyId}`, {
+        const response = await authFetch(`${API_BASE}/api/favorite-properties/${favoritePropertyId}`, {
           method: 'DELETE',
         });
 
@@ -509,7 +543,7 @@ const UploadedPropertyList = () => {
         notes: notes || null,
       };
 
-      const response = await fetch(`${API_BASE}/api/favorite-properties`, {
+      const response = await authFetch(`${API_BASE}/api/favorite-properties`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -607,7 +641,7 @@ const UploadedPropertyList = () => {
         body[field] = value || null;
       }
 
-      const response = await fetch(`${API_BASE}/api/managed-properties`, {
+      const response = await authFetch(`${API_BASE}/api/managed-properties`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -679,7 +713,7 @@ const UploadedPropertyList = () => {
         articleFeatureDesc: editForm.articleFeatureDesc || null,
       };
 
-      const response = await fetch(`${API_BASE}/api/properties/${editingArticle.id}`, {
+      const response = await authFetch(`${API_BASE}/api/properties/${editingArticle.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -764,9 +798,6 @@ const UploadedPropertyList = () => {
             case 'buildingName':
               value = article.buildingName || '';
               break;
-            case 'detailAddress':
-              value = article.detailAddress || '';
-              break;
             case 'articleFeatureDesc':
               value = article.articleFeatureDesc || '';
               break;
@@ -805,8 +836,9 @@ const UploadedPropertyList = () => {
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    const dateStr = new Date().toISOString().slice(0, 10);
-    link.download = `업로드매물_${dateStr}.csv`;
+    const now = new Date();
+    const timestampStr = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`;
+    link.download = `업로드매물_${timestampStr}.csv`;
     link.click();
 
     return Promise.resolve();
@@ -1573,19 +1605,20 @@ const UploadedPropertyList = () => {
 
       {/* 관리매물 등록 모달 */}
       {showManagedModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm" onClick={() => setShowManagedModal(false)}>
-          <div className="bg-hud-bg-secondary rounded-2xl border border-hud-border-secondary shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-6 py-4 border-b border-hud-border-secondary">
+        <div className="hud-modal-overlay" onClick={() => setShowManagedModal(false)}>
+          <div className="hud-modal-backdrop" />
+          <div className="hud-modal-panel w-full max-w-3xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="hud-modal-header px-6">
               <h2 className="text-lg font-bold text-hud-text-primary">관리매물 등록</h2>
-              <button onClick={() => setShowManagedModal(false)} className="p-2 hover:bg-hud-bg-hover rounded-lg transition-colors">
+              <button onClick={() => setShowManagedModal(false)} className="hud-modal-close">
                 <X className="w-5 h-5 text-hud-text-muted" />
               </button>
             </div>
-            <div className="p-6 space-y-6">
+            <div className="p-6 space-y-6 flex-1 overflow-y-auto">
               {/* 기본 정보 */}
               <div>
                 <h3 className="text-sm font-semibold text-hud-text-primary mb-3">기본 정보</h3>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-medium text-hud-text-muted mb-1">매물명 *</label>
                     <input
@@ -1647,7 +1680,7 @@ const UploadedPropertyList = () => {
               {/* 계약 기간 */}
               <div>
                 <h3 className="text-sm font-semibold text-hud-text-primary mb-3">계약 기간</h3>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-medium text-hud-text-muted mb-1">계약 시작일 *</label>
                     <input
@@ -1672,7 +1705,7 @@ const UploadedPropertyList = () => {
               {/* 금액 정보 */}
               <div>
                 <h3 className="text-sm font-semibold text-hud-text-primary mb-3">금액 정보</h3>
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div>
                     <label className="block text-xs font-medium text-hud-text-muted mb-1">총 거래금액 (만원)</label>
                     <input
@@ -1709,7 +1742,7 @@ const UploadedPropertyList = () => {
               {/* 담당 정보 */}
               <div>
                 <h3 className="text-sm font-semibold text-hud-text-primary mb-3">담당 정보</h3>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-medium text-hud-text-muted mb-1">세입자명</label>
                     <input
@@ -1760,7 +1793,7 @@ const UploadedPropertyList = () => {
                 />
               </div>
             </div>
-            <div className="flex justify-end gap-3 px-6 py-4 border-t border-hud-border-secondary">
+            <div className="hud-modal-footer px-6">
               <Button variant="outline" onClick={() => setShowManagedModal(false)}>취소</Button>
               <Button onClick={saveManagedProperty} className="bg-emerald-500 hover:bg-emerald-600 text-white">등록</Button>
             </div>
@@ -1770,19 +1803,20 @@ const UploadedPropertyList = () => {
 
       {/* 매물 수정 모달 */}
       {showEditModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm" onClick={() => setShowEditModal(false)}>
-          <div className="bg-hud-bg-secondary rounded-2xl border border-hud-border-secondary shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-6 py-4 border-b border-hud-border-secondary">
+        <div className="hud-modal-overlay" onClick={() => setShowEditModal(false)}>
+          <div className="hud-modal-backdrop" />
+          <div className="hud-modal-panel w-full max-w-2xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="hud-modal-header px-6">
               <h2 className="text-lg font-bold text-hud-text-primary">매물 수정</h2>
-              <button onClick={() => setShowEditModal(false)} className="p-2 hover:bg-hud-bg-hover rounded-lg transition-colors">
+              <button onClick={() => setShowEditModal(false)} className="hud-modal-close">
                 <X className="w-5 h-5 text-hud-text-muted" />
               </button>
             </div>
-            <div className="p-6 space-y-4">
+            <div className="p-6 space-y-4 flex-1 overflow-y-auto">
               {/* 기본 정보 */}
               <div>
                 <h3 className="text-sm font-semibold text-hud-text-primary mb-3">기본 정보</h3>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="col-span-2">
                     <label className="block text-xs font-medium text-hud-text-muted mb-1">매물명 *</label>
                     <input
@@ -1840,7 +1874,7 @@ const UploadedPropertyList = () => {
               {/* 가격 정보 */}
               <div>
                 <h3 className="text-sm font-semibold text-hud-text-primary mb-3">가격 정보 (만원)</h3>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-medium text-hud-text-muted mb-1">매매/보증금</label>
                     <input
@@ -1865,7 +1899,7 @@ const UploadedPropertyList = () => {
               {/* 상세 정보 */}
               <div>
                 <h3 className="text-sm font-semibold text-hud-text-primary mb-3">상세 정보</h3>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-medium text-hud-text-muted mb-1">면적 (㎡)</label>
                     <input
@@ -1892,7 +1926,7 @@ const UploadedPropertyList = () => {
               {/* 담당자 정보 */}
               <div>
                 <h3 className="text-sm font-semibold text-hud-text-primary mb-3">담당자 정보</h3>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-medium text-hud-text-muted mb-1">책임자명</label>
                     <input
@@ -1926,7 +1960,7 @@ const UploadedPropertyList = () => {
                 />
               </div>
             </div>
-            <div className="flex justify-end gap-3 px-6 py-4 border-t border-hud-border-secondary">
+            <div className="hud-modal-footer px-6">
               <Button variant="outline" onClick={() => setShowEditModal(false)}>취소</Button>
               <Button onClick={updateArticle} className="bg-amber-500 hover:bg-amber-600 text-white">수정</Button>
             </div>
@@ -1936,11 +1970,12 @@ const UploadedPropertyList = () => {
 
       {/* 매물 상세보기 모달 */}
       {showDetailModal && detailArticle && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm p-4" onClick={() => setShowDetailModal(false)}>
-          <div className="bg-hud-bg-secondary rounded-2xl border border-hud-border-secondary shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-6 py-4 border-b border-hud-border-secondary sticky top-0 bg-hud-bg-secondary z-10">
+        <div className="hud-modal-overlay" onClick={() => setShowDetailModal(false)}>
+          <div className="hud-modal-backdrop" />
+          <div className="hud-modal-panel w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="hud-modal-header px-6 sticky top-0 z-10">
               <h2 className="text-lg font-bold text-hud-text-primary">매물 상세정보</h2>
-              <button onClick={() => setShowDetailModal(false)} className="p-2 hover:bg-hud-bg-hover rounded-lg transition-colors">
+              <button onClick={() => setShowDetailModal(false)} className="hud-modal-close">
                 <X className="w-5 h-5 text-hud-text-muted" />
               </button>
             </div>
@@ -2059,7 +2094,7 @@ const UploadedPropertyList = () => {
                 </div>
               )}
             </div>
-            <div className="flex justify-end gap-3 px-6 py-4 border-t border-hud-border-secondary sticky bottom-0 bg-hud-bg-secondary">
+            <div className="hud-modal-footer px-6 sticky bottom-0">
               <Button
                 variant="outline"
                 onClick={() => { setShowDetailModal(false); editItem(detailArticle); }}

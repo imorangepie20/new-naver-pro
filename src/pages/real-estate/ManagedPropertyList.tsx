@@ -4,6 +4,8 @@ import {
     DollarSign, User, FileText, Eye, Home, Calendar, Building2
 } from 'lucide-react'
 import Button from '../../components/common/Button'
+import { useAuthStore } from '../../stores/authStore'
+import { API_BASE } from '../../lib/api'
 
 interface ManagedProperty {
     id: string
@@ -31,8 +33,6 @@ interface ManagedProperty {
     status: string
     createdAt: string
 }
-
-const API = import.meta.env.VITE_API_URL || 'http://localhost:3001'
 
 const RENEWAL_FILTERS = [
     { label: '전체', days: undefined },
@@ -66,6 +66,7 @@ const emptyForm = {
 }
 
 export default function ManagedPropertyList() {
+    const authFetch = useAuthStore((state) => state.authFetch)
     const [properties, setProperties] = useState<ManagedProperty[]>([])
     const [loading, setLoading] = useState(true)
     const [renewalFilter, setRenewalFilter] = useState<number | undefined>(undefined)
@@ -82,7 +83,11 @@ export default function ManagedPropertyList() {
             setLoading(true)
             const params = new URLSearchParams()
             if (renewalFilter !== undefined) params.append('renewalDays', String(renewalFilter))
-            const res = await fetch(`${API}/api/managed-properties?${params}`)
+            const res = await authFetch(`${API_BASE}/api/managed-properties?${params}`)
+            if (!res.ok) {
+                setProperties([])
+                return
+            }
             const data = await res.json()
             if (data.success) setProperties(data.properties || [])
         } catch (err) {
@@ -92,7 +97,7 @@ export default function ManagedPropertyList() {
         }
     }
 
-    useEffect(() => { fetchProperties() }, [renewalFilter])
+    useEffect(() => { void fetchProperties() }, [renewalFilter])
 
     const handleSubmit = async () => {
         if (!form.articleName || !form.contractType) {
@@ -107,13 +112,13 @@ export default function ManagedPropertyList() {
 
         try {
             if (editingId) {
-                await fetch(`${API}/api/managed-properties/${editingId}`, {
+                await authFetch(`${API_BASE}/api/managed-properties/${editingId}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(body),
                 })
             } else {
-                await fetch(`${API}/api/managed-properties`, {
+                await authFetch(`${API_BASE}/api/managed-properties`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(body),
@@ -122,7 +127,7 @@ export default function ManagedPropertyList() {
             setShowForm(false)
             setEditingId(null)
             setForm(emptyForm)
-            fetchProperties()
+            void fetchProperties()
         } catch (err) {
             console.error('Failed to save:', err)
         }
@@ -159,8 +164,8 @@ export default function ManagedPropertyList() {
     const handleDelete = async (id: string) => {
         if (!confirm('삭제하시겠습니까?')) return
         try {
-            await fetch(`${API}/api/managed-properties/${id}`, { method: 'DELETE' })
-            fetchProperties()
+            await authFetch(`${API_BASE}/api/managed-properties/${id}`, { method: 'DELETE' })
+            void fetchProperties()
         } catch (err) {
             console.error('Failed to delete:', err)
         }
@@ -223,15 +228,16 @@ export default function ManagedPropertyList() {
 
             {/* 등록/수정 폼 모달 */}
             {showForm && (
-                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowForm(false)}>
-                    <div className="bg-hud-bg-secondary rounded-2xl border border-hud-border-secondary shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-                        <div className="flex items-center justify-between px-4 sm:px-6 py-4 border-b border-hud-border-secondary">
+                <div className="hud-modal-overlay" onClick={() => setShowForm(false)}>
+                    <div className="hud-modal-backdrop" />
+                    <div className="hud-modal-panel w-full max-w-2xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+                        <div className="hud-modal-header px-4 sm:px-6">
                             <h2 className="text-base sm:text-lg font-bold text-hud-text-primary">{editingId ? '관리매물 수정' : '관리매물 등록'}</h2>
-                            <button onClick={() => setShowForm(false)} className="p-2 hover:bg-hud-bg-hover rounded-lg transition-colors">
+                            <button onClick={() => setShowForm(false)} className="hud-modal-close">
                                 <X className="w-5 h-5 text-hud-text-muted" />
                             </button>
                         </div>
-                        <div className="p-4 sm:p-6 space-y-4 sm:space-y-5">
+                        <div className="p-4 sm:p-6 space-y-4 sm:space-y-5 flex-1 overflow-y-auto">
                             {/* 기본 정보 */}
                             <div>
                                 <h3 className="text-sm font-semibold text-hud-text-primary mb-3 flex items-center gap-2"><FileText className="w-4 h-4" /> 기본 정보</h3>
@@ -352,7 +358,7 @@ export default function ManagedPropertyList() {
                             {/* 금액 정보 */}
                             <div>
                                 <h3 className="text-sm font-semibold text-hud-text-primary mb-3 flex items-center gap-2"><DollarSign className="w-4 h-4" /> 금액 정보</h3>
-                                <div className="grid grid-cols-3 gap-3">
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                                     <div>
                                         <label className="block text-xs font-medium text-hud-text-muted mb-1">총거래금액 (만원)</label>
                                         <input
@@ -386,7 +392,7 @@ export default function ManagedPropertyList() {
                             {/* 담당 정보 */}
                             <div>
                                 <h3 className="text-sm font-semibold text-hud-text-primary mb-3 flex items-center gap-2"><User className="w-4 h-4" /> 담당 정보</h3>
-                                <div className="grid grid-cols-2 gap-3">
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                     <div>
                                         <label className="block text-xs font-medium text-hud-text-muted mb-1">세입자명</label>
                                         <input
@@ -437,7 +443,7 @@ export default function ManagedPropertyList() {
                                 />
                             </div>
                         </div>
-                        <div className="flex justify-end gap-3 px-4 sm:px-6 py-4 border-t border-hud-border-secondary">
+                        <div className="hud-modal-footer px-4 sm:px-6">
                             <Button variant="outline" onClick={() => setShowForm(false)} className="flex-1 sm:flex-none">취소</Button>
                             <Button onClick={handleSubmit} className="bg-emerald-500 hover:bg-emerald-600 text-white flex-1 sm:flex-none">
                                 {editingId ? '수정' : '등록'}
@@ -592,11 +598,12 @@ export default function ManagedPropertyList() {
 
             {/* 상세보기 모달 */}
             {showDetailModal && detailProperty && (
-                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm p-4" onClick={() => setShowDetailModal(false)}>
-                    <div className="bg-hud-bg-secondary rounded-2xl border border-hud-border-secondary shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-                        <div className="flex items-center justify-between px-6 py-4 border-b border-hud-border-secondary sticky top-0 bg-hud-bg-secondary z-10">
+                <div className="hud-modal-overlay" onClick={() => setShowDetailModal(false)}>
+                    <div className="hud-modal-backdrop" />
+                    <div className="hud-modal-panel w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+                        <div className="hud-modal-header px-6 sticky top-0 z-10">
                             <h2 className="text-lg font-bold text-hud-text-primary">관리매물 상세정보</h2>
-                            <button onClick={() => setShowDetailModal(false)} className="p-2 hover:bg-hud-bg-hover rounded-lg transition-colors">
+                            <button onClick={() => setShowDetailModal(false)} className="hud-modal-close">
                                 <X className="w-5 h-5 text-hud-text-muted" />
                             </button>
                         </div>
@@ -755,7 +762,7 @@ export default function ManagedPropertyList() {
                                 </div>
                             )}
                         </div>
-                        <div className="flex justify-end gap-3 px-6 py-4 border-t border-hud-border-secondary sticky bottom-0 bg-hud-bg-secondary">
+                        <div className="hud-modal-footer px-6 sticky bottom-0">
                             <Button
                                 variant="outline"
                                 onClick={() => { setShowDetailModal(false); handleEdit(detailProperty); }}

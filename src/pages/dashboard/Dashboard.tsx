@@ -24,6 +24,8 @@ import HudCard from '../../components/common/HudCard';
 import StatCard from '../../components/common/StatCard';
 import Button from '../../components/common/Button';
 import PriceTrendChart from '../../components/real-estate/PriceTrendChart';
+import RebStatsPanel from '../../components/real-estate/RebStatsPanel';
+import { useAuthStore } from '../../stores/authStore';
 
 import { API_BASE } from '../../lib/api';
 import { getHolidayName } from '../../lib/korean-holidays';
@@ -335,6 +337,7 @@ const TodayScheduleCard = ({ schedules, onAdd }: TodayScheduleCardProps) => {
 // ============================================
 
 const Dashboard = () => {
+    const authFetch = useAuthStore((state) => state.authFetch);
     const [summary, setSummary] = useState<DashboardSummary | null>(null);
     const [recentProperties, setRecentProperties] = useState<RecentProperty[]>([]);
     const [recentFavorites, setRecentFavorites] = useState<RecentFavorite[]>([]);
@@ -352,8 +355,6 @@ const Dashboard = () => {
         }
 
         try {
-            const headers = { 'x-user-id': 'temp-user' };
-
             const [
                 summaryRes,
                 propertiesRes,
@@ -362,12 +363,12 @@ const Dashboard = () => {
                 contractsRes,
                 schedulesRes,
             ] = await Promise.all([
-                fetch(`${API_BASE}/api/dashboard/summary`),
-                fetch(`${API_BASE}/api/dashboard/recent-properties?days=10`),
-                fetch(`${API_BASE}/api/dashboard/recent-favorites?days=10`, { headers }),
-                fetch(`${API_BASE}/api/dashboard/recent-managed?days=10`, { headers }),
-                fetch(`${API_BASE}/api/dashboard/recent-contracts?days=30`, { headers }),
-                fetch(`${API_BASE}/api/schedules/today`, { headers }),
+                authFetch(`${API_BASE}/api/dashboard/summary`),
+                authFetch(`${API_BASE}/api/dashboard/recent-properties?days=10`),
+                authFetch(`${API_BASE}/api/dashboard/recent-favorites?days=10`),
+                authFetch(`${API_BASE}/api/dashboard/recent-managed?days=10`),
+                authFetch(`${API_BASE}/api/dashboard/recent-contracts?days=30`),
+                authFetch(`${API_BASE}/api/schedules/today`),
             ]);
 
             if (summaryRes.ok) {
@@ -508,6 +509,9 @@ const Dashboard = () => {
                     <PriceTrendChart title="최근 거래 금액 추이" period="6month" />
                 </div>
             </div>
+
+            {/* Public Data Row */}
+            <RebStatsPanel />
 
             {/* Recent Lists Row - 2 */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

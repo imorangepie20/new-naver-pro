@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo } from 'react'
 import { Heart, Search, Trash2, Plus, Pencil, X, Eye, Home, DollarSign, FileText } from 'lucide-react'
 import Button from '../../components/common/Button'
+import { useAuthStore } from '../../stores/authStore'
+import { API_BASE } from '../../lib/api'
 
 interface FavoriteProperty {
     id: string
@@ -14,8 +16,6 @@ interface FavoriteProperty {
     notes?: string | null
     createdAt: string
 }
-
-const API = import.meta.env.VITE_API_URL || 'http://localhost:3001'
 
 const PROPERTY_TYPES = ['아파트', '오피스텔', '빌라', '주택', '상가', '토지', '기타']
 const TRADE_TYPES = ['매매', '전세', '월세']
@@ -36,6 +36,7 @@ function formatDate(dateStr: string) {
 }
 
 export default function FavoritePropertyList() {
+    const authFetch = useAuthStore((state) => state.authFetch)
     const [properties, setProperties] = useState<FavoriteProperty[]>([])
     const [loading, setLoading] = useState(true)
     const [searchTerm, setSearchTerm] = useState('')
@@ -50,7 +51,11 @@ export default function FavoritePropertyList() {
     const fetchFavorites = async () => {
         try {
             setLoading(true)
-            const res = await fetch(`${API}/api/favorite-properties`)
+            const res = await authFetch(`${API_BASE}/api/favorite-properties`)
+            if (!res.ok) {
+                setProperties([])
+                return
+            }
             const data = await res.json()
             if (data.success) setProperties(data.properties || [])
         } catch (err) {
@@ -60,7 +65,7 @@ export default function FavoritePropertyList() {
         }
     }
 
-    useEffect(() => { fetchFavorites() }, [])
+    useEffect(() => { void fetchFavorites() }, [])
 
     const handleSubmit = async () => {
         const body: any = { ...form }
@@ -69,18 +74,18 @@ export default function FavoritePropertyList() {
 
         try {
             if (editingId) {
-                await fetch(`${API}/api/favorite-properties/${editingId}`, {
+                await authFetch(`${API_BASE}/api/favorite-properties/${editingId}`, {
                     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
                 })
             } else {
-                await fetch(`${API}/api/favorite-properties`, {
+                await authFetch(`${API_BASE}/api/favorite-properties`, {
                     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
                 })
             }
             setShowForm(false)
             setEditingId(null)
             setForm(emptyForm)
-            fetchFavorites()
+            void fetchFavorites()
         } catch (err) {
             console.error('Failed to save:', err)
         }
@@ -99,8 +104,8 @@ export default function FavoritePropertyList() {
     const handleDelete = async (id: string) => {
         if (!confirm('삭제하시겠습니까?')) return
         try {
-            await fetch(`${API}/api/favorite-properties/${id}`, { method: 'DELETE' })
-            fetchFavorites()
+            await authFetch(`${API_BASE}/api/favorite-properties/${id}`, { method: 'DELETE' })
+            void fetchFavorites()
         } catch (err) {
             console.error('Failed to delete:', err)
         }
@@ -154,11 +159,12 @@ export default function FavoritePropertyList() {
 
             {/* 등록/수정 폼 모달 */}
             {showForm && (
-                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm p-4" onClick={() => setShowForm(false)}>
-                    <div className="bg-hud-bg-secondary rounded-2xl border border-hud-border-secondary shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-                        <div className="flex items-center justify-between px-6 py-4 border-b border-hud-border-secondary">
+                <div className="hud-modal-overlay" onClick={() => setShowForm(false)}>
+                    <div className="hud-modal-backdrop" />
+                    <div className="hud-modal-panel w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+                        <div className="hud-modal-header px-6">
                             <h2 className="text-lg font-bold text-hud-text-primary">{editingId ? '관심매물 수정' : '관심매물 등록'}</h2>
-                            <button onClick={() => setShowForm(false)} className="p-2 hover:bg-hud-bg-hover rounded-lg"><X className="w-5 h-5 text-hud-text-muted" /></button>
+                            <button onClick={() => setShowForm(false)} className="hud-modal-close"><X className="w-5 h-5 text-hud-text-muted" /></button>
                         </div>
                         <div className="p-6 space-y-4">
                             <div>
@@ -241,7 +247,7 @@ export default function FavoritePropertyList() {
                                 />
                             </div>
                         </div>
-                        <div className="flex justify-end gap-3 px-6 py-4 border-t border-hud-border-secondary">
+                        <div className="hud-modal-footer px-6">
                             <Button variant="outline" onClick={() => setShowForm(false)} className="flex-1 sm:flex-none">취소</Button>
                             <Button onClick={handleSubmit} className="bg-pink-500 hover:bg-pink-600 text-white flex-1 sm:flex-none">
                                 {editingId ? '수정' : '등록'}
@@ -383,11 +389,12 @@ export default function FavoritePropertyList() {
 
             {/* 상세보기 모달 */}
             {showDetailModal && detailProperty && (
-                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm p-4" onClick={() => setShowDetailModal(false)}>
-                    <div className="bg-hud-bg-secondary rounded-2xl border border-hud-border-secondary shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-                        <div className="flex items-center justify-between px-6 py-4 border-b border-hud-border-secondary sticky top-0 bg-hud-bg-secondary z-10">
+                <div className="hud-modal-overlay" onClick={() => setShowDetailModal(false)}>
+                    <div className="hud-modal-backdrop" />
+                    <div className="hud-modal-panel w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+                        <div className="hud-modal-header px-6 sticky top-0 z-10">
                             <h2 className="text-lg font-bold text-hud-text-primary">관심매물 상세정보</h2>
-                            <button onClick={() => setShowDetailModal(false)} className="p-2 hover:bg-hud-bg-hover rounded-lg transition-colors">
+                            <button onClick={() => setShowDetailModal(false)} className="hud-modal-close">
                                 <X className="w-5 h-5 text-hud-text-muted" />
                             </button>
                         </div>
@@ -453,7 +460,7 @@ export default function FavoritePropertyList() {
                                 </div>
                             )}
                         </div>
-                        <div className="flex justify-end gap-3 px-6 py-4 border-t border-hud-border-secondary sticky bottom-0 bg-hud-bg-secondary">
+                        <div className="hud-modal-footer px-6 sticky bottom-0">
                             <Button
                                 variant="outline"
                                 onClick={() => { setShowDetailModal(false); handleEdit(detailProperty); }}

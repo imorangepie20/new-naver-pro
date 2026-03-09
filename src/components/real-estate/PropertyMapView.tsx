@@ -1,42 +1,12 @@
 // ============================================
 // 매물 지도 뷰 컴포넌트
-// Leaflet + OpenStreetMap 사용 (API 키 불필요)
+// Kakao Maps SDK 사용
 // ============================================
 
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { X, MapPin, Loader2, Layers, Map as MapIcon } from 'lucide-react';
-import L from 'leaflet';
-
-// Leaflet 마커 아이콘 생성 함수
-const createIcon = (isSelected: boolean, priceText: string) => {
-    const color = isSelected ? '#00FFCC' : '#FF0000';
-    return L.divIcon({
-        className: 'custom-div-icon',
-        html: `
-            <div style="
-                background: ${color};
-                color: white;
-                padding: 10px 14px;
-                border-radius: 24px;
-                font-size: 16px;
-                font-weight: bold;
-                white-space: nowrap;
-                box-shadow: 0 4px 12px rgba(0,0,0,0.5);
-                cursor: pointer;
-                text-shadow: 0 1px 2px rgba(0,0,0,0.3);
-                border: 3px solid white;
-                min-width: 80px;
-                text-align: center;
-            ">
-                ${priceText}
-            </div>
-        `,
-        iconSize: [100, 40],
-        iconAnchor: [50, 20],
-        popupAnchor: [0, -20],
-    });
-};
+import { loadKakaoMapsSdk } from '../../lib/map/loadKakaoMapsSdk';
 
 interface Property {
     articleNo: string;
@@ -73,6 +43,90 @@ interface PropertyMapViewProps {
     onClose: () => void;
 }
 
+const isValidCoordinate = (latitude: number, longitude: number) => Number.isFinite(latitude) && Number.isFinite(longitude);
+
+const createPropertyOverlay = (kakao: any, property: Property, isSelected: boolean, onClick: () => void) => {
+    const priceText = property.dealOrWarrantPrc || '가격문의';
+    const bubble = document.createElement('button');
+    bubble.type = 'button';
+    bubble.style.background = isSelected ? '#00D9FF' : '#EF4444';
+    bubble.style.color = 'white';
+    bubble.style.padding = '10px 14px';
+    bubble.style.borderRadius = '24px';
+    bubble.style.fontSize = '14px';
+    bubble.style.fontWeight = '700';
+    bubble.style.whiteSpace = 'nowrap';
+    bubble.style.boxShadow = '0 4px 12px rgba(0,0,0,0.45)';
+    bubble.style.cursor = 'pointer';
+    bubble.style.textShadow = '0 1px 2px rgba(0,0,0,0.3)';
+    bubble.style.border = '3px solid white';
+    bubble.style.minWidth = '72px';
+    bubble.style.textAlign = 'center';
+    bubble.style.outline = 'none';
+    bubble.textContent = priceText;
+    bubble.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onClick();
+    });
+
+    return new kakao.maps.CustomOverlay({
+        position: new kakao.maps.LatLng(property.latitude, property.longitude),
+        content: bubble,
+        yAnchor: 1,
+        clickable: true,
+    });
+};
+
+const createComplexOverlay = (kakao: any, complex: Complex, onClick: () => void) => {
+    const countText = complex.totalArticleCount ? `${complex.totalArticleCount}건` : '단지';
+    const container = document.createElement('button');
+    container.type = 'button';
+    container.style.background = '#F59E0B';
+    container.style.color = 'white';
+    container.style.padding = '8px 12px';
+    container.style.borderRadius = '20px';
+    container.style.whiteSpace = 'nowrap';
+    container.style.boxShadow = '0 4px 12px rgba(0,0,0,0.45)';
+    container.style.cursor = 'pointer';
+    container.style.border = '3px solid white';
+    container.style.minWidth = '72px';
+    container.style.display = 'flex';
+    container.style.flexDirection = 'column';
+    container.style.gap = '1px';
+    container.style.alignItems = 'center';
+    container.style.outline = 'none';
+
+    const title = document.createElement('div');
+    title.style.maxWidth = '110px';
+    title.style.overflow = 'hidden';
+    title.style.textOverflow = 'ellipsis';
+    title.style.whiteSpace = 'nowrap';
+    title.style.fontSize = '10px';
+    title.style.opacity = '0.95';
+    title.textContent = complex.complexName || '단지';
+
+    const count = document.createElement('div');
+    count.style.fontSize = '13px';
+    count.style.fontWeight = '700';
+    count.textContent = countText;
+
+    container.appendChild(title);
+    container.appendChild(count);
+    container.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onClick();
+    });
+
+    return new kakao.maps.CustomOverlay({
+        position: new kakao.maps.LatLng(complex.latitude, complex.longitude),
+        content: container,
+        yAnchor: 1,
+        clickable: true,
+    });
+};
+
 const PropertyMapView: React.FC<PropertyMapViewProps> = ({
     properties,
     complexes = [],
@@ -83,166 +137,88 @@ const PropertyMapView: React.FC<PropertyMapViewProps> = ({
 }) => {
     const navigate = useNavigate();
     const mapRef = useRef<HTMLDivElement>(null);
-    const mapInstanceRef = useRef<L.Map | null>(null);
-    const markersRef = useRef<L.Marker[]>([]);
-    const tileLayerRef = useRef<L.TileLayer | null>(null);
+    const mapInstanceRef = useRef<any>(null);
+    const overlaysRef = useRef<any[]>([]);
     const [mapLoaded, setMapLoaded] = useState(false);
     const [loadingError, setLoadingError] = useState(false);
     const [mapType, setMapType] = useState<'street' | 'satellite'>('street');
     const [mapReady, setMapReady] = useState(false);
-    const initialFitDoneRef = useRef(false);
 
-    // 콜백을 ref에 저장하여 useEffect dependency에서 제외
     const onPropertySelectRef = useRef(onPropertySelect);
     onPropertySelectRef.current = onPropertySelect;
     const onComplexClickRef = useRef(onComplexClick);
     onComplexClickRef.current = onComplexClick;
 
-    // Leaflet 로드 확인
+    const clearOverlays = () => {
+        overlaysRef.current.forEach((overlay) => overlay.setMap(null));
+        overlaysRef.current = [];
+    };
+
     useEffect(() => {
-        if (typeof window !== 'undefined' && (window as any).L) {
-            setMapLoaded(true);
-            return;
-        }
-        const timer = setTimeout(() => {
-            if (typeof window !== 'undefined' && (window as any).L) {
+        let mounted = true;
+
+        const initMap = async () => {
+            try {
+                await loadKakaoMapsSdk();
+                if (!mounted || !mapRef.current || mapInstanceRef.current) return;
+
+                const kakao = window.kakao;
+                const map = new kakao.maps.Map(mapRef.current, {
+                    center: new kakao.maps.LatLng(37.5665, 126.9780),
+                    level: 5,
+                });
+
+                mapInstanceRef.current = map;
                 setMapLoaded(true);
-            } else {
-                setLoadingError(true);
-            }
-        }, 1000);
-        return () => clearTimeout(timer);
-    }, []);
-
-    // 지도 초기화 (한 번만 실행 — mapLoaded가 true가 되면)
-    useEffect(() => {
-        if (!mapLoaded || !mapRef.current || mapInstanceRef.current) return;
-
-        try {
-            const map = L.map(mapRef.current, {
-                center: [37.5665, 126.9780], // 초기 센터 (서울)
-                zoom: 12,
-                zoomControl: false,
-            });
-
-            const tileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-                maxZoom: 19,
-            }).addTo(map);
-
-            tileLayerRef.current = tileLayer;
-            mapInstanceRef.current = map;
-            L.control.zoom({ position: 'topright' }).addTo(map);
-            setMapReady(true);
-        } catch (error) {
-            console.error('Failed to initialize map:', error);
-            setLoadingError(true);
-        }
-
-        return () => {
-            if (mapInstanceRef.current) {
-                mapInstanceRef.current.remove();
-                mapInstanceRef.current = null;
+                setMapReady(true);
+            } catch (error) {
+                console.error('Failed to initialize Kakao map:', error);
+                if (mounted) {
+                    setLoadingError(true);
+                }
             }
         };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [mapLoaded]);
 
-    // 마커 표시 (complexes/properties 변경 시 마커만 갱신)
+        initMap();
+
+        return () => {
+            mounted = false;
+            clearOverlays();
+            mapInstanceRef.current = null;
+        };
+    }, []);
+
     useEffect(() => {
-        if (!mapInstanceRef.current) return;
+        if (!mapInstanceRef.current || !window.kakao?.maps) return;
 
         const map = mapInstanceRef.current;
+        const kakao = window.kakao;
+        clearOverlays();
 
-        // 기존 마커 제거
-        markersRef.current.forEach(marker => marker.remove());
-        markersRef.current = [];
+        const bounds = new kakao.maps.LatLngBounds();
+        let pointsCount = 0;
+        let singlePoint: any = null;
 
-        const bounds = L.latLngBounds([]);
-        let hasValidBounds = false;
-
-        // 매물 마커
         properties.forEach((property) => {
-            if (!property.latitude || !property.longitude || isNaN(property.latitude) || isNaN(property.longitude)) return;
+            if (!isValidCoordinate(property.latitude, property.longitude)) return;
 
-            const position: L.LatLngExpression = [property.latitude, property.longitude];
             const isSelected = selectedProperty?.articleNo === property.articleNo;
-            const priceText = property.dealOrWarrantPrc || '가격문의';
-
-            const icon = createIcon(isSelected, priceText);
-            const marker = L.marker(position, { icon });
-
-            const popupContent = `
-                <div style="min-width: 150px; font-family: sans-serif;">
-                    <strong style="display: block; margin-bottom: 4px;">${property.articleName}</strong>
-                    <div style="color: #6366F1; font-weight: bold; font-size: 14px;">${priceText}</div>
-                    <div style="color: #666; font-size: 12px;">${property.realEstateTypeName}</div>
-                    <div style="color: #666; font-size: 12px;">${property.tradeTypeName}</div>
-                </div>
-            `;
-            marker.bindPopup(popupContent);
-
-            marker.on('click', () => {
+            const overlay = createPropertyOverlay(kakao, property, isSelected, () => {
                 onPropertySelectRef.current(property);
             });
+            overlay.setMap(map);
+            overlaysRef.current.push(overlay);
 
-            marker.addTo(map);
-            markersRef.current.push(marker);
-            bounds.extend(position);
-            hasValidBounds = true;
+            const point = new kakao.maps.LatLng(property.latitude, property.longitude);
+            bounds.extend(point);
+            singlePoint = point;
+            pointsCount += 1;
         });
 
-        // 단지 마커
         complexes.forEach((complex) => {
-            if (!complex.latitude || !complex.longitude || isNaN(complex.latitude) || isNaN(complex.longitude)) return;
+            if (!isValidCoordinate(complex.latitude, complex.longitude)) return;
 
-            const position: L.LatLngExpression = [complex.latitude, complex.longitude];
-            const countText = complex.totalArticleCount ? `${complex.totalArticleCount}건` : '단지';
-
-            const complexIcon = L.divIcon({
-                className: 'custom-div-icon',
-                html: `
-                    <div style="
-                        background: #F59E0B;
-                        color: white;
-                        padding: 8px 12px;
-                        border-radius: 20px;
-                        font-size: 14px;
-                        font-weight: bold;
-                        white-space: nowrap;
-                        box-shadow: 0 4px 12px rgba(0,0,0,0.5);
-                        cursor: pointer;
-                        border: 3px solid white;
-                        min-width: 60px;
-                        text-align: center;
-                    ">
-                        <div style="font-size: 10px; opacity: 0.9;">단지</div>
-                        <div>${countText}</div>
-                    </div>
-                `,
-                iconSize: [80, 50],
-                iconAnchor: [40, 25],
-                popupAnchor: [0, -25],
-            });
-
-            const marker = L.marker(position, { icon: complexIcon });
-
-            const popupContent = `
-                <div style="min-width: 180px; font-family: sans-serif;">
-                    <strong style="display: block; margin-bottom: 4px;">${complex.complexName}</strong>
-                    <div style="color: #666; font-size: 12px;">${complex.realEstateTypeName}</div>
-                    <div style="color: #F59E0B; font-weight: bold; font-size: 13px; margin-top: 4px;">
-                        총 ${complex.totalArticleCount || 0}건
-                        ${complex.dealCount ? `(매매 ${complex.dealCount})` : ''}
-                        ${complex.leaseCount ? `(전세 ${complex.leaseCount})` : ''}
-                    </div>
-                    <div style="color: #6366F1; font-size: 11px; margin-top: 6px;">클릭하면 매물 목록으로 이동</div>
-                </div>
-            `;
-            marker.bindPopup(popupContent);
-
-            // 클릭 시 임시 매물 목록으로 이동
-            marker.on('click', () => {
+            const overlay = createComplexOverlay(kakao, complex, () => {
                 if (onComplexClickRef.current) {
                     onComplexClickRef.current(complex);
                 } else {
@@ -254,60 +230,48 @@ const PropertyMapView: React.FC<PropertyMapViewProps> = ({
                     navigate(`/real-estate/temp-properties?${params.toString()}`);
                 }
             });
+            overlay.setMap(map);
+            overlaysRef.current.push(overlay);
 
-            marker.addTo(map);
-            markersRef.current.push(marker);
-            bounds.extend(position);
-            hasValidBounds = true;
+            const point = new kakao.maps.LatLng(complex.latitude, complex.longitude);
+            bounds.extend(point);
+            singlePoint = point;
+            pointsCount += 1;
         });
 
-        // 모든 마커가 보이도록 fitBounds (최초 1회 또는 데이터 변경 시)
-        if (hasValidBounds) {
-            if (!initialFitDoneRef.current) {
-                map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
-                initialFitDoneRef.current = true;
-            } else {
-                map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
-            }
+        if (pointsCount > 1) {
+            map.setBounds(bounds, 80, 80, 80, 80);
+        } else if (pointsCount === 1 && singlePoint) {
+            map.setCenter(singlePoint);
+            map.setLevel(4);
         }
     }, [properties, complexes, selectedProperty, navigate, mapReady]);
 
-    // 선택된 매물로 이동
     useEffect(() => {
-        if (!mapInstanceRef.current || !selectedProperty) return;
+        if (!mapInstanceRef.current || !selectedProperty || !window.kakao?.maps) return;
+        if (!isValidCoordinate(selectedProperty.latitude, selectedProperty.longitude)) return;
+
         const map = mapInstanceRef.current;
-        map.setView([selectedProperty.latitude, selectedProperty.longitude], 15, {
-            animate: true,
-            duration: 0.5,
-        });
+        const point = new window.kakao.maps.LatLng(selectedProperty.latitude, selectedProperty.longitude);
+        map.panTo(point);
+        if (map.getLevel() > 4) {
+            map.setLevel(4);
+        }
     }, [selectedProperty]);
 
-    // 지도 타입 변경
     useEffect(() => {
-        if (!mapInstanceRef.current || !tileLayerRef.current) return;
-
+        if (!mapInstanceRef.current || !window.kakao?.maps) return;
         const map = mapInstanceRef.current;
-        tileLayerRef.current.remove();
-
         if (mapType === 'street') {
-            const streetLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '&copy; OpenStreetMap contributors',
-                maxZoom: 19,
-            }).addTo(map);
-            tileLayerRef.current = streetLayer;
+            map.setMapTypeId(window.kakao.maps.MapTypeId.ROADMAP);
         } else {
-            const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-                attribution: '&copy; Esri',
-                maxZoom: 19,
-            }).addTo(map);
-            tileLayerRef.current = satelliteLayer;
+            map.setMapTypeId(window.kakao.maps.MapTypeId.HYBRID);
         }
     }, [mapType]);
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
             <div className="w-[80vw] h-[80vh] flex flex-col bg-hud-bg-primary rounded-lg shadow-2xl overflow-hidden">
-                {/* 타이틀바 */}
                 <div className="flex items-center justify-between px-4 py-3 bg-hud-bg-secondary border-b border-hud-border-secondary">
                     <div className="flex items-center gap-2">
                         <MapIcon className="w-4 h-4 text-hud-accent-primary" />
@@ -323,21 +287,18 @@ const PropertyMapView: React.FC<PropertyMapViewProps> = ({
                     </button>
                 </div>
 
-                {/* 지도 영역 */}
                 <div className="flex-1 relative">
                     <div ref={mapRef} className="w-full h-full bg-gray-800" />
 
-                    {/* 로딩 상태 */}
                     {!mapLoaded && !loadingError && (
                         <div className="absolute inset-0 flex items-center justify-center bg-hud-bg-primary z-10">
                             <div className="flex flex-col items-center gap-3">
                                 <Loader2 className="w-10 h-10 text-hud-accent-primary animate-spin" />
-                                <p className="text-sm text-hud-text-muted">지도를 불러오는 중...</p>
+                                <p className="text-sm text-hud-text-muted">카카오 지도를 불러오는 중...</p>
                             </div>
                         </div>
                     )}
 
-                    {/* 매물 없음 안내 */}
                     {mapLoaded && properties.length === 0 && complexes.length === 0 && !loadingError && (
                         <div className="absolute inset-0 flex items-center justify-center bg-hud-bg-primary z-10">
                             <div className="text-center p-6">
@@ -348,7 +309,6 @@ const PropertyMapView: React.FC<PropertyMapViewProps> = ({
                         </div>
                     )}
 
-                    {/* 매물/단지 수 표시 */}
                     {(properties.length > 0 || complexes.length > 0) && (
                         <div className="absolute bottom-4 left-4 z-[1000] px-4 py-2 bg-hud-bg-secondary/90 backdrop-blur border border-hud-border-secondary rounded-lg shadow-lg">
                             <span className="text-sm text-hud-text-primary">
@@ -362,7 +322,6 @@ const PropertyMapView: React.FC<PropertyMapViewProps> = ({
                         </div>
                     )}
 
-                    {/* 지도 타입 전환 */}
                     {mapLoaded && (
                         <div className="absolute top-4 right-4 z-[1000] flex gap-2">
                             <button
@@ -373,7 +332,7 @@ const PropertyMapView: React.FC<PropertyMapViewProps> = ({
                                     }`}
                             >
                                 <Layers size={16} className="inline mr-1" />
-                                지적도
+                                일반
                             </button>
                             <button
                                 onClick={() => setMapType('satellite')}

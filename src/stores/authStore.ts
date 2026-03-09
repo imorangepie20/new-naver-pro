@@ -9,6 +9,16 @@ import { useThemeStore } from './themeStore';
 
 import { API_BASE } from '../lib/api';
 
+async function parseApiResponse(response: Response) {
+  const raw = await response.text();
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw) as Record<string, any>;
+  } catch {
+    return {};
+  }
+}
+
 // 사용자 타입
 export interface User {
   id: string;
@@ -27,6 +37,7 @@ interface AuthState {
   token: string | null;
   isAuthenticated: boolean;
   isLoading: boolean;
+  authChecked: boolean;
 
   // 액션
   login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
@@ -44,6 +55,7 @@ export const useAuthStore = create<AuthState>()(
       token: null,
       isAuthenticated: false,
       isLoading: false,
+      authChecked: false,
 
       // 로그인
       login: async (email: string, password: string) => {
@@ -56,7 +68,7 @@ export const useAuthStore = create<AuthState>()(
             body: JSON.stringify({ email, password }),
           });
 
-          const data = await response.json();
+          const data = await parseApiResponse(response);
 
           if (response.ok && data.success) {
             set({
@@ -64,13 +76,17 @@ export const useAuthStore = create<AuthState>()(
               token: data.token,
               isAuthenticated: true,
               isLoading: false,
+              authChecked: true,
             });
             // Load theme preferences from user data
             useThemeStore.getState().loadFromUser(data.user);
             return { success: true };
           } else {
             set({ isLoading: false });
-            return { success: false, error: data.error || '로그인에 실패했습니다.' };
+            const errorMessage =
+              data.error ||
+              (response.status >= 500 ? '서버 오류가 발생했습니다.' : '로그인에 실패했습니다.');
+            return { success: false, error: errorMessage };
           }
         } catch (error) {
           set({ isLoading: false });
@@ -89,7 +105,7 @@ export const useAuthStore = create<AuthState>()(
             body: JSON.stringify({ email, name, password }),
           });
 
-          const data = await response.json();
+          const data = await parseApiResponse(response);
 
           if (response.ok && data.success) {
             set({
@@ -97,13 +113,17 @@ export const useAuthStore = create<AuthState>()(
               token: data.token,
               isAuthenticated: true,
               isLoading: false,
+              authChecked: true,
             });
             // Load theme preferences from user data
             useThemeStore.getState().loadFromUser(data.user);
             return { success: true };
           } else {
             set({ isLoading: false });
-            return { success: false, error: data.error || '회원가입에 실패했습니다.' };
+            const errorMessage =
+              data.error ||
+              (response.status >= 500 ? '서버 오류가 발생했습니다.' : '회원가입에 실패했습니다.');
+            return { success: false, error: errorMessage };
           }
         } catch (error) {
           set({ isLoading: false });
@@ -117,13 +137,25 @@ export const useAuthStore = create<AuthState>()(
           user: null,
           token: null,
           isAuthenticated: false,
+          authChecked: true,
         });
       },
 
       // 인증 상태 확인
       checkAuth: async () => {
         const { token } = get();
-        if (!token) return;
+        if (!token) {
+          set({
+            user: null,
+            token: null,
+            isAuthenticated: false,
+            isLoading: false,
+            authChecked: true,
+          });
+          return;
+        }
+
+        set({ isLoading: true });
 
         try {
           const response = await fetch(`${API_BASE}/api/auth/me`, {
@@ -137,15 +169,19 @@ export const useAuthStore = create<AuthState>()(
             set({
               user: data.user,
               isAuthenticated: true,
+              isLoading: false,
+              authChecked: true,
             });
             // Load theme preferences from user data
             useThemeStore.getState().loadFromUser(data.user);
           } else {
             // 토큰이 유효하지 않으면 로그아웃
             get().logout();
+            set({ isLoading: false, authChecked: true });
           }
         } catch (error) {
           console.error('Auth check failed:', error);
+          set({ isLoading: false, authChecked: true });
         }
       },
 

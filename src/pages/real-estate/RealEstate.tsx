@@ -31,6 +31,7 @@ import PropertyMapView from '../../components/real-estate/PropertyMapView';
 import HudCard from '../../components/common/HudCard';
 import Button from '../../components/common/Button';
 import type { RealEstateTypeCode, TradeTypeCode } from '../../types/naver-land';
+import { useAuthStore } from '../../stores/authStore';
 
 import { API_BASE } from '../../lib/api';
 
@@ -129,6 +130,7 @@ const SORT_OPTIONS: { value: SortOption; label: string; icon: React.ReactNode }[
 
 const RealEstate = () => {
     const navigate = useNavigate();
+    const authFetch = useAuthStore((state) => state.authFetch);
 
     // ============================================
     // State
@@ -166,6 +168,14 @@ const RealEstate = () => {
     // 필터 토글 (모바일)
     const [showFilter, setShowFilter] = useState(false);
 
+    const appendArticleFilterParams = (params: URLSearchParams) => {
+        params.set('tradeType', selectedTrade);
+        if (priceMin > 0) params.set('priceMin', String(priceMin));
+        if (priceMax < 1000000) params.set('priceMax', String(priceMax));
+        if (areaMin > 0) params.set('areaMin', String(areaMin));
+        if (areaMax < 200) params.set('areaMax', String(areaMax));
+    };
+
     // ============================================
     // Effects
     // ============================================
@@ -173,9 +183,7 @@ const RealEstate = () => {
         // 저장한 매물 목록 로드
         const fetchSavedProperties = async () => {
             try {
-                const response = await fetch(`${API_BASE}/api/user/saved-properties`, {
-                    headers: { 'x-user-id': 'temp-user' },
-                });
+                const response = await authFetch(`${API_BASE}/api/user/saved-properties`);
                 if (response.ok) {
                     const data = await response.json();
                     const savedSet = new Set<string>(data.savedProperties.map((s: any) => s.articleNo));
@@ -206,6 +214,18 @@ const RealEstate = () => {
                     if (state.selectedTrade) {
                         setSelectedTrade(state.selectedTrade);
                     }
+                    if (typeof state.priceMin === 'number') {
+                        setPriceMin(state.priceMin);
+                    }
+                    if (typeof state.priceMax === 'number') {
+                        setPriceMax(state.priceMax);
+                    }
+                    if (typeof state.areaMin === 'number') {
+                        setAreaMin(state.areaMin);
+                    }
+                    if (typeof state.areaMax === 'number') {
+                        setAreaMax(state.areaMax);
+                    }
                 }
             } catch (e) {
                 console.error('Failed to restore complex list state:', e);
@@ -222,6 +242,7 @@ const RealEstate = () => {
             complexName: complex.complexName,
             realEstateType: complex.realEstateTypeCode || 'APT',
         });
+        appendArticleFilterParams(queryParams);
         navigate(`/real-estate/apartment-temp-properties?${queryParams.toString()}`);
     };
 
@@ -260,6 +281,10 @@ const RealEstate = () => {
                     selectedRegion,
                     selectedType,
                     selectedTrade,
+                    priceMin,
+                    priceMax,
+                    areaMin,
+                    areaMax,
                     timestamp: new Date().toISOString(),
                 }));
             } else {
@@ -269,6 +294,7 @@ const RealEstate = () => {
                     cortarName: selectedRegion.cortarName,
                     realEstateType: realEstateType,
                 });
+                appendArticleFilterParams(queryParams);
                 navigate(`/real-estate/apartment-temp-properties?${queryParams.toString()}`);
             }
         } catch (error) {
@@ -317,9 +343,8 @@ const RealEstate = () => {
 
         try {
             if (isSaved) {
-                await fetch(`${API_BASE}/api/user/saved-properties/${article.articleNo}`, {
+                await authFetch(`${API_BASE}/api/user/saved-properties/${article.articleNo}`, {
                     method: 'DELETE',
-                    headers: { 'x-user-id': 'temp-user' },
                 });
                 setSavedArticles(prev => {
                     const next = new Set(prev);
@@ -327,10 +352,9 @@ const RealEstate = () => {
                     return next;
                 });
             } else {
-                await fetch(`${API_BASE}/api/user/saved-properties`, {
+                await authFetch(`${API_BASE}/api/user/saved-properties`, {
                     method: 'POST',
                     headers: {
-                        'x-user-id': 'temp-user',
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({
@@ -557,7 +581,7 @@ const RealEstate = () => {
                                                 value={priceMin || ''}
                                                 onChange={(e) => setPriceMin(Number(e.target.value) || 0)}
                                                 placeholder="최소"
-                                                className="w-full px-3 py-2.5 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-sm text-hud-text-primary focus:outline-none focus:border-hud-accent-primary focus:ring-1 focus:ring-hud-accent-primary/50 transition-all"
+                                                className="no-spinner w-full px-3 py-2.5 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-sm text-hud-text-primary focus:outline-none focus:border-hud-accent-primary focus:ring-1 focus:ring-hud-accent-primary/50 transition-all"
                                             />
                                         </div>
                                         <span className="text-hud-text-muted font-medium">~</span>
@@ -567,7 +591,7 @@ const RealEstate = () => {
                                                 value={priceMax === 1000000 ? '' : priceMax}
                                                 onChange={(e) => setPriceMax(Number(e.target.value) || 1000000)}
                                                 placeholder="최대"
-                                                className="w-full px-3 py-2.5 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-sm text-hud-text-primary focus:outline-none focus:border-hud-accent-primary focus:ring-1 focus:ring-hud-accent-primary/50 transition-all"
+                                                className="no-spinner w-full px-3 py-2.5 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-sm text-hud-text-primary focus:outline-none focus:border-hud-accent-primary focus:ring-1 focus:ring-hud-accent-primary/50 transition-all"
                                             />
                                         </div>
                                     </div>
@@ -586,7 +610,7 @@ const RealEstate = () => {
                                                 value={areaMin || ''}
                                                 onChange={(e) => setAreaMin(Number(e.target.value) || 0)}
                                                 placeholder="최소"
-                                                className="w-full px-3 py-2.5 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-sm text-hud-text-primary focus:outline-none focus:border-hud-accent-primary focus:ring-1 focus:ring-hud-accent-primary/50 transition-all"
+                                                className="no-spinner w-full px-3 py-2.5 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-sm text-hud-text-primary focus:outline-none focus:border-hud-accent-primary focus:ring-1 focus:ring-hud-accent-primary/50 transition-all"
                                             />
                                         </div>
                                         <span className="text-hud-text-muted font-medium">~</span>
@@ -596,7 +620,7 @@ const RealEstate = () => {
                                                 value={areaMax === 200 ? '' : areaMax}
                                                 onChange={(e) => setAreaMax(Number(e.target.value) || 200)}
                                                 placeholder="최대"
-                                                className="w-full px-3 py-2.5 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-sm text-hud-text-primary focus:outline-none focus:border-hud-accent-primary focus:ring-1 focus:ring-hud-accent-primary/50 transition-all"
+                                                className="no-spinner w-full px-3 py-2.5 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-sm text-hud-text-primary focus:outline-none focus:border-hud-accent-primary focus:ring-1 focus:ring-hud-accent-primary/50 transition-all"
                                             />
                                         </div>
                                     </div>
@@ -748,6 +772,7 @@ const RealEstate = () => {
                                                             complexNames,
                                                             realEstateType: selectedType,
                                                         });
+                                                        appendArticleFilterParams(queryParams);
                                                         navigate(`/real-estate/apartment-temp-properties?${queryParams.toString()}`);
                                                     }}
                                                     className="text-sm"

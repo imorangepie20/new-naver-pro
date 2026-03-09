@@ -52,7 +52,7 @@ const Register = () => {
     const result = await register(email, name, password)
 
     if (result.success) {
-      navigate('/')
+      navigate('/profile?from=register')
     } else {
       setError(result.error || '회원가입에 실패했습니다.')
     }

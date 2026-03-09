@@ -22,6 +22,7 @@ import HudCard from '../../components/common/HudCard';
 import Button from '../../components/common/Button';
 import ExcelExportModal, { EXPORT_FIELDS, ExportFieldKey } from '../../components/real-estate/ExcelExportModal';
 import type { Article } from '../../types/naver-land';
+import { useAuthStore } from '../../stores/authStore';
 
 const ITEMS_PER_PAGE = 20; // 네이버 API와 동일하게 20개씩
 import { API_BASE } from '../../lib/api';
@@ -31,9 +32,17 @@ interface ArticleWithId extends Article {
   id: string;
 }
 
+const parseNumberParam = (raw: string | null): number | undefined => {
+  if (!raw) return undefined;
+  const num = Number(raw);
+  if (!Number.isFinite(num)) return undefined;
+  return num;
+};
+
 const ApartmentTempPropertyList = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const authFetch = useAuthStore((state) => state.authFetch);
 
   // URL 파라미터에서 정보 가져오기
   const complexNo = searchParams.get('complexNo') || '';
@@ -43,6 +52,11 @@ const ApartmentTempPropertyList = () => {
   const cortarNo = searchParams.get('cortarNo') || '';
   const cortarName = searchParams.get('cortarName') || '';
   const realEstateTypeCode = searchParams.get('realEstateType') || 'APT';
+  const queryTradeType = searchParams.get('tradeType') || 'A1';
+  const priceMinParam = parseNumberParam(searchParams.get('priceMin'));
+  const priceMaxParam = parseNumberParam(searchParams.get('priceMax'));
+  const areaMinParam = parseNumberParam(searchParams.get('areaMin'));
+  const areaMaxParam = parseNumberParam(searchParams.get('areaMax'));
 
   // 복수 단지 모드: 여러 단지를 선택한 경우
   const complexNos = complexNosParam ? complexNosParam.split(',') : [];
@@ -80,7 +94,7 @@ const ApartmentTempPropertyList = () => {
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
 
   // 거래 방식 (기본값: A1 매매)
-  const [tradeType, setTradeType] = useState<string>('A1');
+  const [tradeType, setTradeType] = useState<string>(queryTradeType);
 
   // 실제 매물 타입
   const getRealEstateType = useCallback(() => {
@@ -88,6 +102,17 @@ const ApartmentTempPropertyList = () => {
     if (realEstateTypeCode === 'APT') return 'APT:PRE';
     return realEstateTypeCode; // VL, DDDGG, ONEROOM 등은 그대로
   }, [realEstateTypeCode]);
+
+  const appendRangeParams = useCallback((params: URLSearchParams) => {
+    if (typeof priceMinParam === 'number' && priceMinParam > 0) params.set('priceMin', String(priceMinParam));
+    if (typeof priceMaxParam === 'number' && priceMaxParam > 0) params.set('priceMax', String(priceMaxParam));
+    if (typeof areaMinParam === 'number' && areaMinParam > 0) params.set('areaMin', String(areaMinParam));
+    if (typeof areaMaxParam === 'number' && areaMaxParam > 0) params.set('areaMax', String(areaMaxParam));
+  }, [areaMaxParam, areaMinParam, priceMaxParam, priceMinParam]);
+
+  useEffect(() => {
+    setTradeType(queryTradeType);
+  }, [queryTradeType]);
 
   // API로 매물 로드
   const loadArticles = useCallback(async (page: number = 1, isLoadMore: boolean = false) => {
@@ -115,6 +140,7 @@ const ApartmentTempPropertyList = () => {
             page: page.toString(),
             order: 'rank',
           });
+          appendRangeParams(params);
           const res = await fetch(`${API_BASE}/api/articles/complex/${cNo}?${params.toString()}`);
           const data = await res.json();
           return {
@@ -145,6 +171,7 @@ const ApartmentTempPropertyList = () => {
           page: page.toString(),
           order: 'rank',
         });
+        appendRangeParams(params);
         response = await fetch(`${API_BASE}/api/articles/complex/${effectiveComplexNo}?${params.toString()}`);
         const data = await response.json();
 
@@ -159,6 +186,7 @@ const ApartmentTempPropertyList = () => {
           page: page.toString(),
           order: 'rank',
         });
+        appendRangeParams(params);
         response = await fetch(`${API_BASE}/api/articles?${params.toString()}`);
         const data = await response.json();
 
@@ -189,7 +217,7 @@ const ApartmentTempPropertyList = () => {
       setIsLoading(false);
       setIsLoadingMore(false);
     }
-  }, [effectiveComplexNo, cortarNo, isComplexMode, isMultiComplexMode, complexNos, getRealEstateType, tradeType]);
+  }, [effectiveComplexNo, cortarNo, isComplexMode, isMultiComplexMode, complexNos, getRealEstateType, tradeType, appendRangeParams]);
 
   // 초기 로드
   useEffect(() => {
@@ -326,7 +354,7 @@ const ApartmentTempPropertyList = () => {
       console.log('저장할 매물:', articlesToSend);
 
       // 서버 API 호출 (중앙 DB 저장)
-      const response = await fetch(`${API_BASE}/api/properties/bulk`, {
+      const response = await authFetch(`${API_BASE}/api/properties/bulk`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -460,8 +488,9 @@ const ApartmentTempPropertyList = () => {
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    const dateStr = new Date().toISOString().slice(0, 10);
-    link.download = `${complexName || cortarName || '매물'}_${dateStr}.csv`;
+    const now = new Date();
+    const timestampStr = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`;
+    link.download = `${complexName || cortarName || '매물'}_${timestampStr}.csv`;
     link.click();
 
     return Promise.resolve();
@@ -533,6 +562,7 @@ const ApartmentTempPropertyList = () => {
             page: page.toString(),
             order: 'rank',
           });
+          appendRangeParams(params);
           response = await fetch(`${API_BASE}/api/articles/complex/${effectiveComplexNo}?${params.toString()}`);
         } else {
           const params = new URLSearchParams({
@@ -542,6 +572,7 @@ const ApartmentTempPropertyList = () => {
             page: page.toString(),
             order: 'rank',
           });
+          appendRangeParams(params);
           response = await fetch(`${API_BASE}/api/articles?${params.toString()}`);
         }
         const data = await response.json();
