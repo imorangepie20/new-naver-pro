@@ -10,10 +10,8 @@ import {
     Calendar as CalendarIcon,
     Clock,
     MapPin,
-    TrendingUp,
     Loader2,
     RefreshCw,
-    CheckCircle,
     ArrowRight,
     AlertCircle,
     Sparkles,
@@ -142,12 +140,47 @@ const formatDateTime = (dateString: string): string => {
     return date.toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' });
 };
 
+const formatPercent = (value: number, total: number): string => {
+    if (!total) return '0%';
+    return `${((value / total) * 100).toFixed(1)}%`;
+};
+
 const daysUntil = (dateString: string): number => {
     const target = new Date(dateString);
     const now = new Date();
     target.setHours(0, 0, 0, 0);
     now.setHours(0, 0, 0, 0);
     return Math.ceil((target.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+};
+
+const getScheduleTypeLabel = (type: string): string => {
+    switch (type) {
+        case 'meeting':
+            return '미팅';
+        case 'task':
+            return '할 일';
+        case 'event':
+            return '이벤트';
+        case 'break':
+            return '휴식';
+        default:
+            return '일정';
+    }
+};
+
+const getScheduleTypeColor = (type: string): string => {
+    switch (type) {
+        case 'meeting':
+            return 'bg-hud-accent-primary/12 text-hud-accent-primary';
+        case 'task':
+            return 'bg-hud-accent-warning/12 text-hud-accent-warning';
+        case 'event':
+            return 'bg-hud-accent-info/12 text-hud-accent-info';
+        case 'break':
+            return 'bg-hud-accent-success/12 text-hud-accent-success';
+        default:
+            return 'bg-hud-bg-tertiary text-hud-text-muted';
+    }
 };
 
 const getTradeTypeBadgeColor = (tradeType: string): string => {
@@ -264,7 +297,7 @@ const TodayScheduleCard = ({ schedules, onAdd }: TodayScheduleCardProps) => {
             action={
                 onAdd && (
                     <Button variant="ghost" size="sm" leftIcon={<CalendarIcon size={14} />} onClick={onAdd}>
-                        일정 추가
+                        캘린더 열기
                     </Button>
                 )
             }
@@ -293,7 +326,12 @@ const TodayScheduleCard = ({ schedules, onAdd }: TodayScheduleCardProps) => {
                                                 'bg-hud-text-muted'
                                     }`} />
                                 <div className="flex-1">
-                                    <h4 className="text-sm font-medium text-hud-text-primary">{schedule.title}</h4>
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        <h4 className="text-sm font-medium text-hud-text-primary">{schedule.title}</h4>
+                                        <span className={`rounded-md px-2 py-0.5 text-[11px] font-medium ${getScheduleTypeColor(schedule.type)}`}>
+                                            {getScheduleTypeLabel(schedule.type)}
+                                        </span>
+                                    </div>
                                     <div className="flex items-center gap-3 mt-1">
                                         <div className="flex items-center gap-1 text-xs text-hud-text-muted">
                                             <Clock size={12} />
@@ -319,13 +357,35 @@ const TodayScheduleCard = ({ schedules, onAdd }: TodayScheduleCardProps) => {
                 ) : (
                     <div className="p-8 text-center text-hud-text-muted">
                         <CalendarIcon size={32} className="mx-auto mb-2 opacity-50" />
-                        <p>오늘 예정된 일정이 없습니다</p>
+                        <p>오늘 일정이 없습니다</p>
                     </div>
                 )}
             </div>
         </HudCard>
     );
 };
+
+interface SummaryMetricCardProps {
+    title: string;
+    value: string;
+    description: string;
+    icon: React.ReactNode;
+}
+
+const SummaryMetricCard = ({ title, value, description, icon }: SummaryMetricCardProps) => (
+    <HudCard className="h-full">
+        <div className="flex items-start justify-between gap-3">
+            <div>
+                <p className="text-xs font-medium text-hud-text-muted">{title}</p>
+                <p className="mt-3 text-3xl font-semibold tracking-tight text-hud-text-primary">{value}</p>
+                <p className="mt-2 text-xs text-hud-text-muted">{description}</p>
+            </div>
+            <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-hud-border-secondary bg-hud-bg-secondary text-hud-text-secondary">
+                {icon}
+            </div>
+        </div>
+    </HudCard>
+);
 
 // ============================================
 // 메인 컴포넌트
@@ -427,68 +487,72 @@ const Dashboard = () => {
         [recentContracts]
     );
 
-    const activityFeed = useMemo(() => {
-        return [
-            ...recentProperties.map((item) => ({
-                id: `property-${item.articleNo}`,
-                title: item.articleName,
-                detail: `${item.realEstateTypeName} · ${item.tradeTypeName}`,
-                time: item.createdAt,
-                tone: 'property',
-            })),
-            ...recentFavorites.map((item) => ({
-                id: `favorite-${item.id}`,
-                title: item.articleName,
-                detail: `관심매물${item.tradeType ? ` · ${item.tradeType}` : ''}`,
-                time: item.createdAt,
-                tone: 'favorite',
-            })),
-            ...recentManaged.map((item) => ({
-                id: `managed-${item.id}`,
-                title: item.articleName,
-                detail: `관리매물 · ${item.contractType}`,
-                time: item.createdAt,
-                tone: 'managed',
-            })),
-        ]
-            .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
-            .slice(0, 6);
-    }, [recentProperties, recentFavorites, recentManaged]);
+    const urgentContracts = useMemo(
+        () => expiringContracts.filter((contract) => contract.daysLeft <= 7),
+        [expiringContracts]
+    );
+
+    const summaryCards = useMemo(() => ([
+        {
+            title: '전체 매물',
+            value: (summary?.totalProperties ?? 0).toLocaleString(),
+            description: '현재 조회 가능한 전체 매물 수',
+            icon: <Building2 size={20} />,
+        },
+        {
+            title: '관심 매물',
+            value: (summary?.favoriteCount ?? 0).toLocaleString(),
+            description: `전체의 ${formatPercent(summary?.favoriteCount ?? 0, summary?.totalProperties ?? 0)}`,
+            icon: <Heart size={20} />,
+        },
+        {
+            title: '관리 매물',
+            value: (summary?.managedCount ?? 0).toLocaleString(),
+            description: `전체의 ${formatPercent(summary?.managedCount ?? 0, summary?.totalProperties ?? 0)}`,
+            icon: <Briefcase size={20} />,
+        },
+        {
+            title: '오늘 일정',
+            value: todaySchedules.length.toLocaleString(),
+            description: nextSchedule ? `다음 일정 ${nextSchedule.isAllDay ? '하루 종일' : formatTime(nextSchedule.startTime)}` : '등록된 일정 없음',
+            icon: <CalendarIcon size={20} />,
+        },
+    ]), [nextSchedule, summary?.favoriteCount, summary?.managedCount, summary?.totalProperties, todaySchedules.length]);
 
     const quickLinks = [
         {
             title: '매물 등록',
-            description: '새 매물 추가',
+            description: '새 매물을 바로 입력합니다',
             path: '/real-estate/register',
             icon: <Building2 className="w-5 h-5 text-hud-accent-primary" />,
         },
         {
             title: '매물 목록',
-            description: '업로드 매물 관리',
+            description: '등록된 매물 목록을 확인합니다',
             path: '/real-estate/uploaded-properties',
             icon: <ClipboardList className="w-5 h-5 text-hud-accent-info" />,
         },
         {
             title: '관심 매물',
-            description: '찜한 매물 확인',
+            description: '저장한 관심 매물을 봅니다',
             path: '/real-estate/favorites',
             icon: <Heart className="w-5 h-5 text-hud-accent-danger" />,
         },
         {
             title: '관리 매물',
-            description: '계약/임대 관리',
+            description: '계약과 만료 일정을 확인합니다',
             path: '/real-estate/managed',
             icon: <Briefcase className="w-5 h-5 text-hud-accent-warning" />,
         },
         {
             title: '주소 통계',
-            description: '입지 분석 보기',
+            description: '지역 시세와 입지 흐름을 봅니다',
             path: '/real-estate/address-market-stats',
             icon: <BarChart3 className="w-5 h-5 text-hud-accent-success" />,
         },
         {
             title: '일정 관리',
-            description: '캘린더 열기',
+            description: '캘린더와 할 일을 관리합니다',
             path: '/calendar',
             icon: <CalendarIcon className="w-5 h-5 text-hud-accent-info" />,
         },
@@ -507,93 +571,132 @@ const Dashboard = () => {
 
     return (
         <div className="space-y-6 animate-fade-in">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
                 <div>
-                    <h1 className="text-2xl font-bold text-hud-text-primary">부동산 대시보드</h1>
-                    <p className="text-hud-text-muted mt-1">오늘 해야 할 일과 최근 파이프라인 변화를 한 화면에서 확인합니다.</p>
+                    <h1 className="text-2xl font-bold text-hud-text-primary">대시보드</h1>
+                    <p className="mt-1 text-hud-text-muted">오늘 확인할 일정, 계약 만료, 최근 매물 현황을 한 화면에 정리했습니다.</p>
                 </div>
-                <Button
-                    variant="primary"
-                    glow
-                    size="sm"
-                    leftIcon={<RefreshCw size={18} className={isRefreshing ? 'animate-spin' : ''} />}
-                    onClick={() => fetchDashboardData(true)}
-                    disabled={isRefreshing}
-                >
-                    새로고침
-                </Button>
+                <div className="flex items-center gap-3">
+                    <div className="hidden text-right md:block">
+                        <p className="text-xs font-medium uppercase tracking-[0.18em] text-hud-text-muted">Today</p>
+                        <p className="mt-1 text-sm text-hud-text-primary">
+                            {new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })}
+                        </p>
+                    </div>
+                    <Button
+                        variant="primary"
+                        glow
+                        size="sm"
+                        leftIcon={<RefreshCw size={18} className={isRefreshing ? 'animate-spin' : ''} />}
+                        onClick={() => fetchDashboardData(true)}
+                        disabled={isRefreshing}
+                    >
+                        새로고침
+                    </Button>
+                </div>
             </div>
 
-            <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.25fr)_360px] gap-6">
-                <HudCard className="overflow-hidden">
-                    <div className="p-6 bg-gradient-to-br from-hud-accent-primary/14 via-hud-bg-secondary to-hud-bg-primary">
-                        <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-5">
-                            <div className="space-y-3">
-                                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-hud-accent-primary/30 bg-hud-accent-primary/10 text-xs text-hud-accent-primary">
-                                    <Sparkles size={14} />
-                                    오늘의 브리핑
-                                </div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                {summaryCards.map((card) => (
+                    <SummaryMetricCard
+                        key={card.title}
+                        title={card.title}
+                        value={card.value}
+                        description={card.description}
+                        icon={card.icon}
+                    />
+                ))}
+            </div>
+
+            <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.2fr)_360px] gap-6">
+                <HudCard title="오늘 확인할 일" subtitle="가까운 일정과 계약 만료 항목을 먼저 보세요">
+                    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
+                        <div className="rounded-2xl border border-hud-border-secondary bg-hud-bg-primary p-5">
+                            <div className="flex items-center justify-between gap-3">
                                 <div>
-                                    <p className="text-3xl font-bold text-hud-text-primary">
-                                        총 {summary?.totalProperties?.toLocaleString() || '0'}건의 매물이 운영 중입니다.
-                                    </p>
-                                    <p className="text-sm text-hud-text-muted mt-2">
-                                        관심매물 {summary?.favoriteCount?.toLocaleString() || '0'}건, 관리매물 {summary?.managedCount?.toLocaleString() || '0'}건을 기준으로 오늘 우선순위를 정리했습니다.
-                                    </p>
+                                    <p className="text-sm font-semibold text-hud-text-primary">다음 일정</p>
+                                    <p className="mt-1 text-xs text-hud-text-muted">오늘 가장 먼저 다가오는 일정입니다.</p>
                                 </div>
+                                <CalendarIcon size={18} className="text-hud-accent-info" />
                             </div>
-                            <div className="min-w-[240px] rounded-2xl border border-hud-border-secondary bg-hud-bg-primary/70 p-4">
-                                <p className="text-xs text-hud-text-muted">가장 가까운 일정</p>
-                                {nextSchedule ? (
-                                    <>
-                                        <p className="text-lg font-semibold text-hud-text-primary mt-2">{nextSchedule.title}</p>
-                                        <p className="text-sm text-hud-text-muted mt-1">
-                                            {nextSchedule.isAllDay ? '하루 종일' : `${formatTime(nextSchedule.startTime)}${nextSchedule.endTime ? ` ~ ${formatTime(nextSchedule.endTime)}` : ''}`}
-                                        </p>
-                                        <p className="text-xs text-hud-text-muted mt-2">
-                                            {nextSchedule.location || '장소 미등록'}
-                                        </p>
-                                    </>
-                                ) : (
-                                    <p className="text-sm text-hud-text-muted mt-2">오늘 등록된 일정이 없습니다.</p>
-                                )}
-                                <Button variant="ghost" size="sm" className="mt-4" onClick={() => navigate('/calendar')}>
-                                    캘린더 열기
-                                </Button>
-                            </div>
+                            {nextSchedule ? (
+                                <div className="mt-5 space-y-3">
+                                    <div>
+                                        <p className="text-xl font-semibold text-hud-text-primary">{nextSchedule.title}</p>
+                                        <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-hud-text-secondary">
+                                            <span className={`rounded-md px-2 py-1 text-xs font-medium ${getScheduleTypeColor(nextSchedule.type)}`}>
+                                                {getScheduleTypeLabel(nextSchedule.type)}
+                                            </span>
+                                            <span>
+                                                {nextSchedule.isAllDay ? '하루 종일' : `${formatTime(nextSchedule.startTime)}${nextSchedule.endTime ? ` ~ ${formatTime(nextSchedule.endTime)}` : ''}`}
+                                            </span>
+                                        </div>
+                                    </div>
+                                    <div className="space-y-1 text-sm text-hud-text-muted">
+                                        <p>{nextSchedule.location || '장소 미등록'}</p>
+                                        {nextSchedule.description && <p className="line-clamp-2">{nextSchedule.description}</p>}
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="mt-5 rounded-xl border border-dashed border-hud-border-secondary px-4 py-6 text-sm text-hud-text-muted">
+                                    오늘 등록된 일정이 없습니다.
+                                </div>
+                            )}
                         </div>
 
-                        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-6">
-                            <div className="rounded-2xl border border-hud-border-secondary bg-hud-bg-primary/65 p-4">
-                                <p className="text-xs text-hud-text-muted">전체 매물</p>
-                                <p className="text-2xl font-bold text-hud-text-primary mt-2">{summary?.totalProperties?.toLocaleString() || '0'}</p>
-                                <p className="text-xs text-hud-text-muted mt-2">현재 관리 가능한 풀</p>
+                        <div className="rounded-2xl border border-hud-border-secondary bg-hud-bg-primary p-5">
+                            <div className="flex items-center justify-between gap-3">
+                                <div>
+                                    <p className="text-sm font-semibold text-hud-text-primary">계약 만료 예정</p>
+                                    <p className="mt-1 text-xs text-hud-text-muted">30일 안에 확인해야 하는 계약입니다.</p>
+                                </div>
+                                <TimerReset size={18} className="text-hud-accent-warning" />
                             </div>
-                            <div className="rounded-2xl border border-hud-border-secondary bg-hud-bg-primary/65 p-4">
-                                <p className="text-xs text-hud-text-muted">관심 전환율</p>
-                                <p className="text-2xl font-bold text-hud-text-primary mt-2">
-                                    {summary?.totalProperties ? `${((summary.favoriteCount / summary.totalProperties) * 100).toFixed(1)}%` : '0%'}
+                            <div className="mt-5 space-y-3">
+                                {expiringContracts.length > 0 ? (
+                                    expiringContracts.slice(0, 3).map((contract) => (
+                                        <div key={contract.id} className="rounded-xl border border-hud-border-secondary bg-hud-bg-secondary px-3 py-3">
+                                            <div className="flex items-start justify-between gap-3">
+                                                <div className="min-w-0">
+                                                    <p className="truncate text-sm font-medium text-hud-text-primary">{contract.articleName}</p>
+                                                    <p className="mt-1 text-xs text-hud-text-muted">
+                                                        {contract.contractType} · {new Date(contract.contractEndDate).toLocaleDateString('ko-KR')}
+                                                    </p>
+                                                </div>
+                                                <span className={`rounded-md px-2 py-1 text-xs font-medium ${contract.daysLeft <= 7 ? 'bg-red-500/15 text-red-400' : 'bg-amber-500/15 text-amber-400'}`}>
+                                                    {contract.daysLeft === 0 ? '오늘' : `D-${contract.daysLeft}`}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    ))
+                                ) : (
+                                    <div className="rounded-xl border border-dashed border-hud-border-secondary px-4 py-6 text-sm text-hud-text-muted">
+                                        가까운 만료 계약이 없습니다.
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="mt-4 rounded-2xl border border-hud-border-secondary bg-hud-bg-secondary px-4 py-4">
+                        <div className="flex items-start gap-3">
+                            <AlertCircle size={18} className="mt-0.5 text-hud-accent-warning" />
+                            <div className="min-w-0">
+                                <p className="text-sm font-medium text-hud-text-primary">오늘 우선순위</p>
+                                <p className="mt-1 text-sm text-hud-text-muted">
+                                    {urgentContracts.length > 0
+                                        ? `7일 안에 만료되는 계약이 ${urgentContracts.length}건 있습니다. 관리 매물 화면에서 먼저 연장 여부를 확인하는 편이 좋습니다.`
+                                        : nextSchedule
+                                          ? '긴급한 만료 계약은 많지 않습니다. 오늘 일정과 신규 매물 점검을 우선 진행하면 됩니다.'
+                                          : '긴급한 계약 만료와 오늘 일정이 모두 적습니다. 신규 등록과 관심 매물 정리에 시간을 쓰기 좋습니다.'}
                                 </p>
-                                <p className="text-xs text-hud-text-muted mt-2">관심매물 비중</p>
-                            </div>
-                            <div className="rounded-2xl border border-hud-border-secondary bg-hud-bg-primary/65 p-4">
-                                <p className="text-xs text-hud-text-muted">관리 전환율</p>
-                                <p className="text-2xl font-bold text-hud-text-primary mt-2">
-                                    {summary?.totalProperties ? `${((summary.managedCount / summary.totalProperties) * 100).toFixed(1)}%` : '0%'}
-                                </p>
-                                <p className="text-xs text-hud-text-muted mt-2">관리매물 비중</p>
-                            </div>
-                            <div className="rounded-2xl border border-hud-border-secondary bg-hud-bg-primary/65 p-4">
-                                <p className="text-xs text-hud-text-muted">오늘 일정</p>
-                                <p className="text-2xl font-bold text-hud-text-primary mt-2">{todaySchedules.length.toLocaleString()}</p>
-                                <p className="text-xs text-hud-text-muted mt-2">일정 우선순위 확인</p>
                             </div>
                         </div>
                     </div>
                 </HudCard>
 
-                <HudCard title="빠른 실행" subtitle="자주 쓰는 메뉴로 바로 이동">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-1 gap-3">
+                <HudCard title="자주 쓰는 메뉴" subtitle="대시보드에서 바로 이동할 수 있습니다">
+                    <div className="grid grid-cols-1 gap-3">
                         {quickLinks.map((item) => (
                             <button
                                 key={item.path}
@@ -614,75 +717,22 @@ const Dashboard = () => {
                 </HudCard>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                <div className="lg:col-span-2">
+            <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)] gap-6">
+                <div>
                     <PriceTrendChart title="최근 거래 금액 추이" period="6month" />
                 </div>
-                <div className="space-y-6">
-                    <TodayScheduleCard
-                        schedules={todaySchedules}
-                        onAdd={() => navigate('/calendar')}
-                    />
-
-                    <HudCard title="계약 리스크" subtitle="30일 이내 만료 예정 계약">
-                        <div className="space-y-3">
-                            {expiringContracts.length > 0 ? (
-                                expiringContracts.map((contract) => (
-                                    <div key={contract.id} className="rounded-xl border border-hud-border-secondary bg-hud-bg-primary p-3">
-                                        <div className="flex items-start justify-between gap-3">
-                                            <div className="min-w-0">
-                                                <p className="text-sm font-medium text-hud-text-primary truncate">{contract.articleName}</p>
-                                                <p className="text-xs text-hud-text-muted mt-1">
-                                                    {contract.contractType} · 만료 {formatDate(contract.contractEndDate)}
-                                                </p>
-                                            </div>
-                                            <div className={`px-2 py-1 rounded-md text-xs font-medium ${contract.daysLeft <= 7 ? 'bg-red-500/15 text-red-400' : 'bg-amber-500/15 text-amber-400'}`}>
-                                                {contract.daysLeft === 0 ? '오늘 만료' : `${contract.daysLeft}일 남음`}
-                                            </div>
-                                        </div>
-                                    </div>
-                                ))
-                            ) : (
-                                <div className="rounded-xl border border-dashed border-hud-border-secondary p-4 text-sm text-hud-text-muted">
-                                    임박한 계약이 없습니다.
-                                </div>
-                            )}
-                        </div>
-                    </HudCard>
-                </div>
+                <TodayScheduleCard
+                    schedules={todaySchedules}
+                    onAdd={() => navigate('/calendar')}
+                />
             </div>
 
-            <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)] gap-6">
-                <HudCard title="최근 변화" subtitle="등록·관심·관리 흐름을 시간순으로 요약">
-                    <div className="space-y-3">
-                        {activityFeed.length > 0 ? (
-                            activityFeed.map((item) => (
-                                <div key={item.id} className="flex items-start gap-3 rounded-xl border border-hud-border-secondary bg-hud-bg-primary p-3">
-                                    <div className={`mt-1 w-2.5 h-2.5 rounded-full ${
-                                        item.tone === 'property'
-                                            ? 'bg-hud-accent-primary'
-                                            : item.tone === 'favorite'
-                                              ? 'bg-hud-accent-danger'
-                                              : 'bg-hud-accent-warning'
-                                    }`} />
-                                    <div className="min-w-0 flex-1">
-                                        <p className="text-sm font-medium text-hud-text-primary truncate">{item.title}</p>
-                                        <p className="text-xs text-hud-text-muted mt-1">{item.detail}</p>
-                                    </div>
-                                    <p className="text-xs text-hud-text-muted flex-shrink-0">{formatDateTime(item.time)}</p>
-                                </div>
-                            ))
-                        ) : (
-                            <div className="rounded-xl border border-dashed border-hud-border-secondary p-4 text-sm text-hud-text-muted">
-                                최근 변화 데이터가 없습니다.
-                            </div>
-                        )}
-                    </div>
-                </HudCard>
+            <RebStatsPanel />
 
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <RecentListCard
                     title="최근 등록 매물"
-                    subtitle="최근 10일 동안 등록된 매물"
+                    subtitle="최근 10일 안에 새로 등록된 매물"
                     items={recentProperties.map(p => ({
                         id: p.articleNo,
                         name: p.articleName,
@@ -695,28 +745,9 @@ const Dashboard = () => {
                     }))}
                     emptyMessage="최근 등록된 매물이 없습니다"
                 />
-            </div>
-
-            <RebStatsPanel />
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <RecentListCard
-                    title="최근 관심 매물"
-                    subtitle="최근 10일 동안 등록된 관심 매물"
-                    items={recentFavorites.map(f => ({
-                        id: f.id,
-                        name: f.articleName,
-                        type: f.propertyType || undefined,
-                        tradeType: f.tradeType || undefined,
-                        price: f.price,
-                        area: f.area,
-                        date: f.createdAt,
-                    }))}
-                    emptyMessage="최근 등록된 관심 매물이 없습니다"
-                />
                 <RecentListCard
                     title="최근 관리 매물"
-                    subtitle="최근 10일 동안 등록된 관리 매물"
+                    subtitle="최근 10일 안에 추가된 관리 매물"
                     items={recentManaged.map(m => ({
                         id: m.id,
                         name: m.articleName,
@@ -733,8 +764,22 @@ const Dashboard = () => {
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <RecentListCard
+                    title="최근 관심 매물"
+                    subtitle="최근 10일 안에 추가된 관심 매물"
+                    items={recentFavorites.map(f => ({
+                        id: f.id,
+                        name: f.articleName,
+                        type: f.propertyType || undefined,
+                        tradeType: f.tradeType || undefined,
+                        price: f.price,
+                        area: f.area,
+                        date: f.createdAt,
+                    }))}
+                    emptyMessage="최근 등록된 관심 매물이 없습니다"
+                />
+                <RecentListCard
                     title="최근 계약 매물"
-                    subtitle="최근 30일 동안 계약된 매물"
+                    subtitle="최근 30일 안에 계약된 매물"
                     items={recentContracts.map(c => ({
                         id: c.id,
                         name: c.articleName,
@@ -747,37 +792,49 @@ const Dashboard = () => {
                     emptyMessage="최근 계약된 매물이 없습니다"
                     showDate={true}
                 />
-                <HudCard title="운영 체크" subtitle="실시간으로 보기 좋은 핵심 신호">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <div className="rounded-2xl border border-hud-border-secondary bg-hud-bg-primary p-4">
-                            <div className="flex items-center gap-2 text-hud-accent-warning">
-                                <TimerReset size={16} />
-                                <span className="text-xs font-medium">계약 만료 임박</span>
-                            </div>
-                            <p className="text-2xl font-bold text-hud-text-primary mt-3">{expiringContracts.length}</p>
-                            <p className="text-xs text-hud-text-muted mt-1">30일 이내 관리 필요</p>
-                        </div>
-                        <div className="rounded-2xl border border-hud-border-secondary bg-hud-bg-primary p-4">
-                            <div className="flex items-center gap-2 text-hud-accent-success">
-                                <CheckCircle size={16} />
-                                <span className="text-xs font-medium">오늘 처리 가능</span>
-                            </div>
-                            <p className="text-2xl font-bold text-hud-text-primary mt-3">
-                                {(todaySchedules.length + expiringContracts.length).toLocaleString()}
-                            </p>
-                            <p className="text-xs text-hud-text-muted mt-1">일정 + 만료 점검 합계</p>
-                        </div>
-                        <div className="rounded-2xl border border-hud-border-secondary bg-hud-bg-primary p-4 sm:col-span-2">
-                            <div className="flex items-center gap-2 text-hud-accent-info">
-                                <AlertCircle size={16} />
-                                <span className="text-xs font-medium">운영 메모</span>
-                            </div>
-                            <p className="text-sm text-hud-text-primary mt-3">
-                                {expiringContracts.length > 0
-                                    ? `이번 달 안에 만료될 계약이 ${expiringContracts.length}건 있습니다. 관리매물 페이지에서 계약 연장 여부를 먼저 확인하는 편이 좋습니다.`
-                                    : '당장 위험 신호는 크지 않습니다. 신규 매물 등록과 관심매물 전환 관리에 시간을 배분하기 좋습니다.'}
-                            </p>
-                        </div>
+                <HudCard title="최근 처리 흐름" subtitle="최근 입력된 데이터가 언제 들어왔는지 확인합니다">
+                    <div className="space-y-3">
+                        {[
+                            ...recentProperties.slice(0, 2).map((item) => ({
+                                id: `property-${item.articleNo}`,
+                                label: '매물 등록',
+                                name: item.articleName,
+                                detail: `${item.realEstateTypeName} · ${item.tradeTypeName}`,
+                                time: item.createdAt,
+                            })),
+                            ...recentFavorites.slice(0, 2).map((item) => ({
+                                id: `favorite-${item.id}`,
+                                label: '관심 매물',
+                                name: item.articleName,
+                                detail: item.tradeType || '유형 미지정',
+                                time: item.createdAt,
+                            })),
+                            ...recentManaged.slice(0, 2).map((item) => ({
+                                id: `managed-${item.id}`,
+                                label: '관리 매물',
+                                name: item.articleName,
+                                detail: item.contractType,
+                                time: item.createdAt,
+                            })),
+                        ]
+                            .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
+                            .slice(0, 6)
+                            .map((item) => (
+                                <div key={item.id} className="rounded-xl border border-hud-border-secondary bg-hud-bg-primary px-4 py-3">
+                                    <div className="flex items-start justify-between gap-3">
+                                        <div className="min-w-0">
+                                            <div className="flex items-center gap-2">
+                                                <span className="rounded-md bg-hud-bg-secondary px-2 py-0.5 text-[11px] font-medium text-hud-text-secondary">
+                                                    {item.label}
+                                                </span>
+                                                <p className="truncate text-sm font-medium text-hud-text-primary">{item.name}</p>
+                                            </div>
+                                            <p className="mt-1 text-xs text-hud-text-muted">{item.detail}</p>
+                                        </div>
+                                        <span className="flex-shrink-0 text-xs text-hud-text-muted">{formatDateTime(item.time)}</span>
+                                    </div>
+                                </div>
+                            ))}
                     </div>
                 </HudCard>
             </div>

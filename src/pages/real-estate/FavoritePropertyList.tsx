@@ -131,7 +131,6 @@ export default function FavoritePropertyList() {
             {/* 헤더 */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
                 <div className="flex items-center gap-3">
-                    <Heart className="w-6 h-6 text-pink-500 fill-pink-500" />
                     <h1 className="text-xl sm:text-2xl font-bold text-hud-text-primary">관심매물</h1>
                     <span className="text-xs sm:text-sm text-hud-text-muted bg-hud-bg-secondary px-2.5 py-1 rounded-full">
                         {filtered.length}건

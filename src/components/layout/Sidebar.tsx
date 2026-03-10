@@ -1,15 +1,15 @@
 import { useState, useEffect } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import {
-    LayoutDashboard,
+    Home,
     BarChart3,
-    User,
     Calendar,
-    Settings,
+    SlidersHorizontal,
     FileText,
     Building2,
     LogOut,
     ChevronDown,
+    Compass,
 } from 'lucide-react'
 import { useAuthStore } from '../../stores/authStore'
 
@@ -28,16 +28,16 @@ interface MenuItem {
 
 interface MenuSection {
     label: string
-    emoji: string
+    icon: React.ReactNode
     items: MenuItem[]
 }
 
 const menuSections: MenuSection[] = [
     {
         label: '메인',
-        emoji: '⚡',
+        icon: <Compass size={14} />,
         items: [
-            { title: 'Dashboard', icon: <LayoutDashboard size={20} />, path: '/', color: 'cyan' },
+            { title: 'Dashboard', icon: <Home size={20} />, path: '/', color: 'cyan' },
             { title: '통계분석', icon: <BarChart3 size={20} />, path: '/real-estate/address-market-stats', color: 'amber' },
             { title: 'REB 통계', icon: <BarChart3 size={20} />, path: '/real-estate/reb-market-stats', color: 'amber' },
             /*{ title: 'Analytics', icon: <BarChart3 size={20} />, path: '/analytics', color: 'amber' },*/
@@ -45,38 +45,38 @@ const menuSections: MenuSection[] = [
     },
     {
         label: '부동산',
-        emoji: '🏠',
+        icon: <Building2 size={14} />,
         items: [
             {
-                title: '매물 데이터',
+                title: '매물 관리',
                 icon: <FileText size={20} />,
                 color: 'emerald',
                 children: [
-                    { title: '매물등록', path: '/real-estate/register' },
-                    { title: '매물목록', path: '/real-estate/uploaded-properties' },
-                    { title: '관심매물', path: '/real-estate/favorites' },
-                    { title: '관리매물', path: '/real-estate/managed' },
+                    { title: '매물 등록', path: '/real-estate/register' },
+                    { title: '매물 목록', path: '/real-estate/uploaded-properties' },
+                    { title: '관심 매물', path: '/real-estate/favorites' },
+                    { title: '관리 매물', path: '/real-estate/managed' },
                 ],
             },
             {
-                title: '네이버 부동산 데이터',
+                title: '네이버 부동산 매물',
                 icon: <Building2 size={20} />,
                 color: 'sky',
                 children: [
-                    { title: '매물 검색', path: '/real-estate' },
-                    { title: '정규 매물 목록', path: '/real-estate/regular-properties' },
+                    { title: '네이버 매물 검색', path: '/real-estate' },
+                    { title: '네이버 정규 매물 목록', path: '/real-estate/regular-properties' },
                 ],
             },
         ],
     },
     {
         label: '설정',
-        emoji: '⚙️',
+        icon: <SlidersHorizontal size={14} />,
         items: [
             /*{ title: 'Profile', icon: <User size={20} />, path: '/profile', color: 'pink' },
             */{ title: 'Calendar', icon: <Calendar size={20} />, path: '/calendar', color: 'orange' },
 
-            { title: 'Settings', icon: <Settings size={20} />, path: '/settings', color: 'rose' },
+            { title: 'Settings', icon: <SlidersHorizontal size={20} />, path: '/settings', color: 'rose' },
         ],
     },
 ]
@@ -187,7 +187,9 @@ const Sidebar = ({ collapsed }: SidebarProps) => {
                         {/* 섹션 라벨 */}
                         {!collapsed && (
                             <div className="px-5 mb-1.5 mt-1 flex items-center gap-2">
-                                <span className="text-base">{section.emoji}</span>
+                                <span className="flex h-5 w-5 items-center justify-center rounded-md bg-white/10 text-white/80">
+                                    {section.icon}
+                                </span>
                                 <span className="text-[11px] font-bold uppercase tracking-[0.18em] text-white/70 select-none">
                                     {section.label}
                                 </span>
