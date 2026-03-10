@@ -15,6 +15,7 @@ import { useAuthStore } from '../../stores/authStore'
 
 interface HeaderProps {
     onMenuToggle: () => void
+    showMenuToggle?: boolean
 }
 
 const notifications = [
@@ -25,7 +26,7 @@ const notifications = [
     { id: 5, title: 'Payment method enabled', time: '10 minutes ago', isNew: false },
 ]
 
-const Header = ({ onMenuToggle }: HeaderProps) => {
+const Header = ({ onMenuToggle, showMenuToggle = true }: HeaderProps) => {
     const [showNotifications, setShowNotifications] = useState(false)
     const [showProfile, setShowProfile] = useState(false)
     const { user, isAuthenticated, logout } = useAuthStore()
@@ -42,13 +43,15 @@ const Header = ({ onMenuToggle }: HeaderProps) => {
             style={{ boxShadow: 'var(--hud-shadow)' }}
         >
             {/* Left Section */}
-            <div className="flex items-center gap-4">
-                <button
-                    onClick={onMenuToggle}
-                    className="p-2 rounded-lg hover:bg-hud-bg-hover transition-hud text-hud-text-secondary hover:text-hud-text-primary"
-                >
-                    <Menu size={20} />
-                </button>
+            <div className={`flex items-center ${showMenuToggle ? 'gap-4' : 'gap-2'}`}>
+                {showMenuToggle && (
+                    <button
+                        onClick={onMenuToggle}
+                        className="p-2 rounded-lg hover:bg-hud-bg-hover transition-hud text-hud-text-secondary hover:text-hud-text-primary"
+                    >
+                        <Menu size={20} />
+                    </button>
+                )}
 
                 {/* Search */}
                 <div className="relative hidden md:block">
@@ -56,7 +59,7 @@ const Header = ({ onMenuToggle }: HeaderProps) => {
                     <input
                         type="text"
                         placeholder="검색..."
-                        className="w-64 pl-10 pr-4 py-2 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-sm text-hud-text-primary placeholder-hud-text-muted focus:outline-none focus:border-hud-accent-primary transition-hud"
+                        className="w-72 lg:w-80 pl-10 pr-4 py-2 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-sm text-hud-text-primary placeholder-hud-text-muted focus:outline-none focus:border-hud-accent-primary transition-hud"
                     />
                 </div>
             </div>

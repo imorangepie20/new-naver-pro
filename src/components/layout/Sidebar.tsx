@@ -129,7 +129,7 @@ const Sidebar = ({ collapsed }: SidebarProps) => {
 
     return (
         <aside
-            className={`fixed top-0 left-0 h-full z-50 transition-all duration-500 ease-out flex flex-col overflow-hidden ${collapsed ? 'w-20' : 'w-64'}`}
+            className={`fixed top-0 left-0 h-full z-50 transition-all duration-500 ease-out flex flex-col overflow-hidden ${collapsed ? 'w-20' : 'w-60'}`}
             style={{
                 background: 'linear-gradient(165deg, #667eea 0%, #764ba2 40%, #f093fb 100%)',
             }}
@@ -143,22 +143,30 @@ const Sidebar = ({ collapsed }: SidebarProps) => {
 
             {/* Logo */}
             <div className="relative h-16 flex items-center justify-center" style={{ borderBottom: '1px solid rgba(255,255,255,0.2)' }}>
-                <Link to="/" className="flex items-center gap-3 group">
-                    <div className="relative">
-                        <div className="absolute inset-0 bg-white rounded-xl blur-md opacity-0 group-hover:opacity-40 transition-opacity duration-500" />
-                        <div className="relative w-10 h-10 rounded-xl overflow-hidden flex items-center justify-center bg-white shadow-lg shadow-purple-900/30 group-hover:shadow-xl group-hover:scale-105 transition-all duration-300">
-                            <img
-                                src="/logo.png"
-                                alt="집돌이 로고"
-                                className="h-[160%] w-auto max-w-none object-contain"
-                                style={{ objectPosition: '0% 0%', transform: 'scale(.9)' }}
-                            />
+                <Link to="/" className="group inline-flex items-center leading-none align-middle">
+                    {collapsed ? (
+                        <div className="relative">
+                            <div className="absolute inset-0 rounded-2xl bg-white blur-md opacity-0 transition-opacity duration-500 group-hover:opacity-40" />
+                            <div className="relative flex h-11 w-11 items-center justify-center overflow-hidden rounded-2xl border border-white/70 bg-white shadow-lg shadow-blue-950/25 transition-all duration-300 group-hover:scale-105 group-hover:shadow-xl">
+                                <img
+                                    src="/icon.png"
+                                    alt="집돌이9 아이콘"
+                                    className="h-full w-full object-cover"
+                                />
+                            </div>
                         </div>
-                    </div>
-                    {!collapsed && (
-                        <span className="font-extrabold text-lg text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.2)] tracking-tight">
-                            집돌이9
-                        </span>
+                    ) : (
+                        <div className="relative">
+                            <div className="absolute inset-0 rounded-2xl bg-white blur-md opacity-0 transition-opacity duration-500 group-hover:opacity-30" />
+                            <div className="relative inline-flex h-9 items-center overflow-hidden rounded-2xl border border-white/65 bg-white/95 px-1 shadow-lg shadow-blue-950/25 transition-all duration-300 group-hover:shadow-xl">
+                                <img
+                                    src="/logo-full.png"
+                                    alt="집돌이9 로고"
+                                    className="h-[44px] w-auto max-w-full object-contain"
+                                    style={{ imageRendering: 'auto' }}
+                                />
+                            </div>
+                        </div>
                     )}
                 </Link>
             </div>

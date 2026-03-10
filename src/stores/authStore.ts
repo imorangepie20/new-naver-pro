@@ -5,7 +5,6 @@
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { useThemeStore } from './themeStore';
 
 import { API_BASE } from '../lib/api';
 
@@ -24,6 +23,7 @@ export interface User {
   id: string;
   email: string;
   name: string;
+  role?: string;
   themeMode?: string | null;
   accentColor?: string | null;
   fontSize?: string | null;
@@ -78,8 +78,6 @@ export const useAuthStore = create<AuthState>()(
               isLoading: false,
               authChecked: true,
             });
-            // Load theme preferences from user data
-            useThemeStore.getState().loadFromUser(data.user);
             return { success: true };
           } else {
             set({ isLoading: false });
@@ -115,8 +113,6 @@ export const useAuthStore = create<AuthState>()(
               isLoading: false,
               authChecked: true,
             });
-            // Load theme preferences from user data
-            useThemeStore.getState().loadFromUser(data.user);
             return { success: true };
           } else {
             set({ isLoading: false });
@@ -172,8 +168,6 @@ export const useAuthStore = create<AuthState>()(
               isLoading: false,
               authChecked: true,
             });
-            // Load theme preferences from user data
-            useThemeStore.getState().loadFromUser(data.user);
           } else {
             // 토큰이 유효하지 않으면 로그아웃
             get().logout();

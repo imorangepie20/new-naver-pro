@@ -612,6 +612,11 @@ const DataManagementSection = () => {
 
 const Settings = () => {
     const [activeSection, setActiveSection] = useState('profile')
+    const currentUser = useAuthStore((state) => state.user)
+    const isThemeAdmin = currentUser?.role === 'admin' || currentUser?.email === 'jowoosung@gmail.com'
+    const visibleSections = isThemeAdmin
+        ? settingsSections
+        : settingsSections.filter((section) => section.id === 'profile' || section.id === 'billing')
 
     // Theme store
     const {
@@ -626,6 +631,12 @@ const Settings = () => {
         setBorderRadius,
         setCompactMode,
     } = useThemeStore()
+
+    useEffect(() => {
+        if (!visibleSections.some((section) => section.id === activeSection)) {
+            setActiveSection('profile')
+        }
+    }, [activeSection, visibleSections])
 
     return (
         <div className="space-y-6 animate-fade-in">
@@ -642,7 +653,7 @@ const Settings = () => {
                 <div className="w-full md:w-56 flex-shrink-0">
                     <HudCard noPadding>
                         <div className="py-2">
-                            {settingsSections.map((section) => (
+                            {visibleSections.map((section) => (
                                 <button
                                     key={section.id}
                                     onClick={() => setActiveSection(section.id)}
@@ -695,6 +706,48 @@ const Settings = () => {
 
                     {activeSection === 'appearance' && (
                         <div className="space-y-6">
+                            {!isThemeAdmin && (
+                                <HudCard title="사이트 외관" subtitle="전역 테마는 최고관리자가 관리합니다">
+                                    <div className="rounded-2xl border border-hud-border-secondary bg-hud-bg-primary p-5 space-y-4">
+                                        <div className="flex items-start gap-3">
+                                            <div className="p-2 rounded-xl bg-hud-accent-primary/10 text-hud-accent-primary">
+                                                <Palette size={18} />
+                                            </div>
+                                            <div>
+                                                <p className="text-sm font-medium text-hud-text-primary">개인별 테마 변경은 비활성화되었습니다.</p>
+                                                <p className="text-xs text-hud-text-muted mt-1">
+                                                    현재 사이트 테마는 최고관리자가 전역으로 설정하며, 모든 사용자에게 동일하게 적용됩니다.
+                                                </p>
+                                            </div>
+                                        </div>
+                                        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                                            <div className="rounded-xl border border-hud-border-secondary bg-hud-bg-secondary p-3">
+                                                <p className="text-[11px] text-hud-text-muted">테마 모드</p>
+                                                <p className="text-sm text-hud-text-primary mt-1">{themeModes.find((item) => item.value === mode)?.label || mode}</p>
+                                            </div>
+                                            <div className="rounded-xl border border-hud-border-secondary bg-hud-bg-secondary p-3">
+                                                <p className="text-[11px] text-hud-text-muted">강조 색상</p>
+                                                <p className="text-sm text-hud-text-primary mt-1">{ACCENT_COLORS[accentColor]?.name || accentColor}</p>
+                                            </div>
+                                            <div className="rounded-xl border border-hud-border-secondary bg-hud-bg-secondary p-3">
+                                                <p className="text-[11px] text-hud-text-muted">글자 크기</p>
+                                                <p className="text-sm text-hud-text-primary mt-1">{fontSizes.find((item) => item.value === fontSize)?.label || fontSize}</p>
+                                            </div>
+                                            <div className="rounded-xl border border-hud-border-secondary bg-hud-bg-secondary p-3">
+                                                <p className="text-[11px] text-hud-text-muted">모서리</p>
+                                                <p className="text-sm text-hud-text-primary mt-1">{borderRadii.find((item) => item.value === borderRadius)?.label || borderRadius}</p>
+                                            </div>
+                                            <div className="rounded-xl border border-hud-border-secondary bg-hud-bg-secondary p-3">
+                                                <p className="text-[11px] text-hud-text-muted">컴팩트 모드</p>
+                                                <p className="text-sm text-hud-text-primary mt-1">{compactMode ? '사용' : '사용 안 함'}</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </HudCard>
+                            )}
+
+                            {isThemeAdmin && (
+                                <>
                             {/* ===== 테마 모드 - Premium Redesign ===== */}
                             <HudCard title="테마 모드" subtitle="선호하는 테마를 선택하세요">
                                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -1007,6 +1060,8 @@ const Settings = () => {
                                     </div>
                                 </div>
                             </HudCard>
+                                </>
+                            )}
                         </div>
                     )}
 

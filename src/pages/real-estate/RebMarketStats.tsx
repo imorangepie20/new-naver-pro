@@ -25,12 +25,6 @@ interface RebTableDataResponse {
   error?: string;
 }
 
-interface TrendPoint {
-  month: string;
-  value: number;
-  count: number;
-}
-
 interface ChangePoint {
   month: string;
   rate: number;
@@ -168,6 +162,60 @@ function pickColumns(rows: RebRow[]) {
   return selected.slice(0, 6);
 }
 
+function getLatestMonthFromRows(rows: RebRow[]): string | null {
+  let latest: string | null = null;
+  rows.forEach((row) => {
+    const month =
+      extractMonthKey(row.WRTTIME_IDTFR_ID) ||
+      extractMonthKey(row.WRTTIME_IDTFR) ||
+      extractMonthKey(row.BASE_DE) ||
+      extractMonthKey(row.DEAL_YMD);
+    if (!month) return;
+    if (!latest || month > latest) {
+      latest = month;
+    }
+  });
+  return latest;
+}
+
+function getLatestAndPreviousWrttimeIdFromRows(rows: RebRow[]) {
+  const monthIdMap = new Map<string, Set<string>>();
+
+  rows.forEach((row) => {
+    const wrttimeIdRaw = row.WRTTIME_IDTFR_ID;
+    if (wrttimeIdRaw === null || wrttimeIdRaw === undefined) return;
+
+    const wrttimeId = String(wrttimeIdRaw).trim();
+    if (!wrttimeId) return;
+
+    const month = extractMonthKey(wrttimeId);
+    if (!month) return;
+
+    const idSet = monthIdMap.get(month) || new Set<string>();
+    idSet.add(wrttimeId);
+    monthIdMap.set(month, idSet);
+  });
+
+  const monthsDesc = Array.from(monthIdMap.keys()).sort((a, b) => b.localeCompare(a));
+  const latestMonth = monthsDesc[0] ?? null;
+  const previousMonth = monthsDesc[1] ?? null;
+
+  const pickLatestIdInMonth = (month: string | null) => {
+    if (!month) return null;
+    const ids = Array.from(monthIdMap.get(month) || []);
+    if (ids.length === 0) return null;
+    ids.sort((a, b) => b.localeCompare(a));
+    return ids[0];
+  };
+
+  return {
+    latestMonth,
+    previousMonth,
+    latestWrttimeId: pickLatestIdInMonth(latestMonth),
+    previousWrttimeId: pickLatestIdInMonth(previousMonth),
+  };
+}
+
 const RebMarketStats = () => {
   const authFetch = useAuthStore((state) => state.authFetch);
 
@@ -189,20 +237,35 @@ const RebMarketStats = () => {
   const [nationalChangeTrend, setNationalChangeTrend] = useState<ChangePoint[]>([]);
 
   const setDataState = (data: RebTableDataResponse) => {
-    setRows(Array.isArray(data.rows) ? data.rows : []);
+    const normalizedRows = Array.isArray(data.rows) ? data.rows : [];
+    setRows(normalizedRows);
     setListTotalCount(data.listTotalCount ?? null);
     setServiceName(data.serviceName ?? null);
     setResultCode(data.resultCode ?? null);
     setResultMessage(data.resultMessage ?? null);
   };
 
-  const fetchTableData = async (selectedStatblId: string) => {
+  const fetchTableDataPage = async (
+    selectedStatblId: string,
+    page: number,
+    options?: {
+      size?: number;
+      wrttimeIdtfrId?: string;
+      clsId?: string;
+    }
+  ) => {
     const params = new URLSearchParams({
       statblId: selectedStatblId,
-      size: String(sampleSize),
-      page: '1',
+      size: String(options?.size ?? sampleSize),
+      page: String(page),
       type: 'json',
     });
+    if (options?.wrttimeIdtfrId) {
+      params.set('wrttimeIdtfrId', options.wrttimeIdtfrId);
+    }
+    if (options?.clsId) {
+      params.set('clsId', options.clsId);
+    }
 
     const response = await authFetch(`${API_BASE}/api/public/reb/table-data?${params.toString()}`);
     const data = (await response.json()) as RebTableDataResponse;
@@ -214,20 +277,78 @@ const RebMarketStats = () => {
     return data;
   };
 
-  const fetchNationalCompositeChangeTrend = async () => {
-    const params = new URLSearchParams({
-      statblId: NATIONAL_COMPOSITE_STATBL_ID,
-      clsId: NATIONAL_CLS_ID,
-      size: '1000',
-      page: '1',
-      type: 'json',
-    });
-
-    const response = await authFetch(`${API_BASE}/api/public/reb/table-data?${params.toString()}`);
-    const data = (await response.json()) as RebTableDataResponse;
-    if (!response.ok || !data.success) {
-      throw new Error(data.error || '전국 주택종합 변동률 데이터를 불러오지 못했습니다.');
+  const fetchLatestSidePageData = async (
+    selectedStatblId: string,
+    options?: {
+      size?: number;
+      clsId?: string;
     }
+  ) => {
+    const pageSize = Math.max(1, options?.size ?? sampleSize);
+    const firstPageData = await fetchTableDataPage(selectedStatblId, 1, options);
+    const total = firstPageData.listTotalCount ?? firstPageData.rows.length;
+    const lastPage = Math.max(1, Math.ceil(total / pageSize));
+    if (lastPage <= 1) return firstPageData;
+
+    try {
+      const lastPageData = await fetchTableDataPage(selectedStatblId, lastPage, options);
+      const firstLatest = getLatestMonthFromRows(firstPageData.rows);
+      const lastLatest = getLatestMonthFromRows(lastPageData.rows);
+      if (lastLatest && (!firstLatest || lastLatest > firstLatest)) {
+        return lastPageData;
+      }
+      return firstPageData;
+    } catch {
+      return firstPageData;
+    }
+  };
+
+  const fetchTableData = async (selectedStatblId: string) => {
+    // 일부 REB 통계표는 page=1이 과거 데이터일 수 있어, 최신 시점이 있는 쪽 페이지를 우선 선택한다.
+    const latestSideData = await fetchLatestSidePageData(selectedStatblId, {
+      size: Math.max(500, sampleSize),
+    });
+    const latestPair = getLatestAndPreviousWrttimeIdFromRows(latestSideData.rows);
+
+    try {
+      if (latestPair.latestWrttimeId) {
+        // 최신월과 직전월을 같이 가져와 비교형 지표를 계산한다.
+        const latestData = await fetchTableDataPage(selectedStatblId, 1, {
+          size: 1000,
+          wrttimeIdtfrId: latestPair.latestWrttimeId,
+        });
+
+        let mergedRows = Array.isArray(latestData.rows) ? [...latestData.rows] : [];
+
+        if (latestPair.previousWrttimeId && latestPair.previousWrttimeId !== latestPair.latestWrttimeId) {
+          const prevData = await fetchTableDataPage(selectedStatblId, 1, {
+            size: 1000,
+            wrttimeIdtfrId: latestPair.previousWrttimeId,
+          });
+          if (Array.isArray(prevData.rows) && prevData.rows.length > 0) {
+            mergedRows = [...mergedRows, ...prevData.rows];
+          }
+        }
+
+        if (mergedRows.length > 0) {
+          return {
+            ...latestData,
+            rows: mergedRows,
+          };
+        }
+      }
+
+      return latestSideData;
+    } catch {
+      return latestSideData;
+    }
+  };
+
+  const fetchNationalCompositeChangeTrend = async () => {
+    const data = await fetchLatestSidePageData(NATIONAL_COMPOSITE_STATBL_ID, {
+      clsId: NATIONAL_CLS_ID,
+      size: 1000,
+    });
 
     const monthMap = new Map<string, { sum: number; count: number }>();
     (Array.isArray(data.rows) ? data.rows : []).forEach((row) => {
@@ -356,56 +477,6 @@ const RebMarketStats = () => {
     }
     void fetchRebStats();
   }, [statblId, sampleSize]);
-
-  const trend = useMemo<TrendPoint[]>(() => {
-    const monthMap = new Map<string, { sum: number; count: number }>();
-
-    rows.forEach((row) => {
-      const month =
-        extractMonthKey(row.WRTTIME_IDTFR_ID) ||
-        extractMonthKey(row.WRTTIME_IDTFR) ||
-        extractMonthKey(row.BASE_DE) ||
-        extractMonthKey(row.DEAL_YMD);
-
-      const value = extractValue(row);
-      if (!month || value === null) return;
-
-      const prev = monthMap.get(month) || { sum: 0, count: 0 };
-      prev.sum += value;
-      prev.count += 1;
-      monthMap.set(month, prev);
-    });
-
-    let points = Array.from(monthMap.entries())
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([month, item]) => ({
-        month,
-        value: item.count > 0 ? item.sum / item.count : 0,
-        count: item.count,
-      }));
-
-    if (monthWindow > 0) {
-      points = points.slice(-monthWindow);
-    }
-
-    return points;
-  }, [rows, monthWindow]);
-
-  const lineChartPoints = useMemo(() => {
-    if (trend.length === 0) return '';
-
-    const min = Math.min(...trend.map((point) => point.value));
-    const max = Math.max(...trend.map((point) => point.value));
-    const span = Math.max(1, max - min);
-
-    return trend
-      .map((point, idx) => {
-        const x = (idx / Math.max(1, trend.length - 1)) * 100;
-        const y = 100 - ((point.value - min) / span) * 100;
-        return `${x},${y}`;
-      })
-      .join(' ');
-  }, [trend]);
 
   const nationalChangeWindowed = useMemo(
     () => (monthWindow > 0 ? nationalChangeTrend.slice(-monthWindow) : nationalChangeTrend),
@@ -545,17 +616,43 @@ const RebMarketStats = () => {
     };
   }, [momentumWithChange]);
 
-  const metrics = useMemo(() => {
-    const latestMonth = trend[trend.length - 1]?.month ?? null;
-    const latestValue = trend[trend.length - 1]?.value ?? null;
-    const prev = trend[trend.length - 2]?.value ?? null;
-    const momRate = latestValue !== null && prev !== null && prev !== 0 ? ((latestValue - prev) / prev) * 100 : null;
+  const marketSignal = useMemo(() => {
+    const comparedCount = breadth.upCount + breadth.downCount + breadth.flatCount;
+    const upShare = comparedCount > 0 ? (breadth.upCount / comparedCount) * 100 : null;
+    const downShare = comparedCount > 0 ? (breadth.downCount / comparedCount) * 100 : null;
+
+    let label = '혼조/관망';
+    if (
+      upShare !== null &&
+      downShare !== null &&
+      breadth.avgChangeRate !== null &&
+      upShare >= 55 &&
+      breadth.avgChangeRate > 0
+    ) {
+      label = '상승 확산';
+    } else if (
+      upShare !== null &&
+      downShare !== null &&
+      breadth.avgChangeRate !== null &&
+      downShare >= 55 &&
+      breadth.avgChangeRate < 0
+    ) {
+      label = '하락 확산';
+    }
 
     return {
-      momRate,
-      latestMonth,
+      comparedCount,
+      upShare,
+      downShare,
+      label,
     };
-  }, [trend]);
+  }, [breadth]);
+
+  const metrics = useMemo(() => {
+    return {
+      latestMonth: getLatestMonthFromRows(rows),
+    };
+  }, [rows]);
 
   const previewColumns = useMemo(() => pickColumns(rows), [rows]);
   const selectedPreset = useMemo(
@@ -575,7 +672,7 @@ const RebMarketStats = () => {
       </div>
 
       <HudCard>
-        <div className="grid grid-cols-1 xl:grid-cols-[1fr_220px_180px_auto] gap-3 items-end">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_220px_180px_auto] gap-3 items-end">
           <div>
             <label className="block text-xs font-medium text-hud-text-muted mb-1">통계표</label>
             <select
@@ -634,6 +731,9 @@ const RebMarketStats = () => {
             새로고침
           </Button>
         </div>
+        {!error && metrics.latestMonth && (
+          <p className="mt-2 text-xs text-hud-text-muted">데이터 기준월: {metrics.latestMonth}</p>
+        )}
       </HudCard>
 
       {error && (
@@ -657,29 +757,38 @@ const RebMarketStats = () => {
         </HudCard>
       ) : (
         <>
-          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
+            <HudCard className="p-4">
+              <p className="text-xs text-hud-text-muted">시장 상태</p>
+              <p className="text-xl font-bold text-hud-text-primary mt-1">{marketSignal.label}</p>
+              <p className="mt-1 text-xs text-hud-text-muted">비교 표본 {marketSignal.comparedCount.toLocaleString()}개</p>
+            </HudCard>
             <HudCard className="p-4">
               <p className="text-xs text-hud-text-muted">최근 기준월</p>
               <p className="text-xl font-bold text-hud-text-primary mt-1">{metrics.latestMonth || '-'}</p>
             </HudCard>
             <HudCard className="p-4">
-              <p className="text-xs text-hud-text-muted">상승 지역 수</p>
-              <p className="text-xl font-bold text-hud-accent-success mt-1">{breadth.upCount.toLocaleString()}</p>
+              <p className="text-xs text-hud-text-muted">전국 월 변동률</p>
+              <p className={`text-xl font-bold mt-1 ${(nationalChangeMetrics.latestRate ?? 0) >= 0 ? 'text-hud-accent-success' : 'text-hud-accent-danger'}`}>
+                {formatSigned(nationalChangeMetrics.latestRate, 3, '%')}
+              </p>
             </HudCard>
             <HudCard className="p-4">
-              <p className="text-xs text-hud-text-muted">하락 지역 수</p>
-              <p className="text-xl font-bold text-hud-accent-danger mt-1">{breadth.downCount.toLocaleString()}</p>
-            </HudCard>
-            <HudCard className="p-4">
-              <p className="text-xs text-hud-text-muted">평균 변동률</p>
+              <p className="text-xs text-hud-text-muted">평균 변화율</p>
               <p className={`text-xl font-bold mt-1 ${(breadth.avgChangeRate ?? 0) >= 0 ? 'text-hud-accent-success' : 'text-hud-accent-danger'}`}>
                 {formatSigned(breadth.avgChangeRate, 2, '%')}
               </p>
             </HudCard>
             <HudCard className="p-4">
-              <p className="text-xs text-hud-text-muted">보합 지역 수</p>
-              <p className="text-xl font-bold text-hud-text-primary mt-1">
-                {breadth.flatCount.toLocaleString()}
+              <p className="text-xs text-hud-text-muted">상승 비중</p>
+              <p className="text-xl font-bold text-hud-accent-success mt-1">
+                {marketSignal.upShare === null ? '-' : `${formatNumber(marketSignal.upShare, 1)}%`}
+              </p>
+            </HudCard>
+            <HudCard className="p-4">
+              <p className="text-xs text-hud-text-muted">하락 비중</p>
+              <p className="text-xl font-bold text-hud-accent-danger mt-1">
+                {marketSignal.downShare === null ? '-' : `${formatNumber(marketSignal.downShare, 1)}%`}
               </p>
             </HudCard>
           </div>
@@ -704,11 +813,11 @@ const RebMarketStats = () => {
                     />
                   </svg>
                 </div>
-                <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-hud-text-muted">
+                <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-hud-text-muted">
                   <span>시작: {nationalChangeMetrics.startMonth || '-'}</span>
                   <span className="text-right">최근: {nationalChangeMetrics.latestMonth || '-'}</span>
                   <span>최근 지수: {formatNumber(nationalChangeMetrics.latestIndexValue, 2)}</span>
-                  <span className="text-right inline-flex items-center justify-end gap-1">
+                  <span className="text-right inline-flex flex-wrap items-center justify-end gap-1">
                     {nationalChangeMetrics.latestRate !== null && nationalChangeMetrics.latestRate >= 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
                     {formatSigned(nationalChangeMetrics.latestRate, 3, '%')}
                     <span className="text-hud-text-muted"> (전월 {formatSigned(nationalChangeMetrics.prevRate, 3, '%')})</span>
@@ -718,38 +827,26 @@ const RebMarketStats = () => {
             )}
           </HudCard>
 
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-            <HudCard title="월별 추이" subtitle="월 평균 지표">
-              {trend.length === 0 ? (
-                <div className="h-44 flex items-center justify-center text-sm text-hud-text-muted">
-                  <Database size={16} className="mr-2" />
-                  월별 추이를 계산할 데이터가 없습니다.
-                </div>
-              ) : (
-                <div>
-                  <div className="h-44 bg-hud-bg-primary border border-hud-border-secondary rounded-lg p-3">
-                    <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="w-full h-full">
-                      <polyline
-                        points={lineChartPoints}
-                        fill="none"
-                        stroke="var(--hud-accent-primary)"
-                        strokeWidth="2.2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  </div>
-                  <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-hud-text-muted">
-                    <span>시작: {trend[0]?.month || '-'}</span>
-                    <span className="text-right">최근: {trend[trend.length - 1]?.month || '-'}</span>
-                    <span>기간 표본: {trend.reduce((sum, point) => sum + point.count, 0).toLocaleString()}건</span>
-                    <span className="text-right inline-flex items-center justify-end gap-1">
-                      {metrics.momRate !== null && metrics.momRate >= 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
-                      {metrics.momRate === null ? '-' : `${metrics.momRate >= 0 ? '+' : ''}${formatNumber(metrics.momRate)}%`}
-                    </span>
-                  </div>
-                </div>
-              )}
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+            <HudCard title="핵심 해석" subtitle="최근월 기준 요약">
+              <div className="space-y-2 text-sm">
+                <p className="text-hud-text-primary">
+                  {metrics.latestMonth || '-'} 기준 시장 상태는 <span className="font-semibold">{marketSignal.label}</span> 입니다.
+                </p>
+                <p className="text-hud-text-muted">
+                  상승 비중 {marketSignal.upShare === null ? '-' : `${formatNumber(marketSignal.upShare, 1)}%`},
+                  {' '}하락 비중 {marketSignal.downShare === null ? '-' : `${formatNumber(marketSignal.downShare, 1)}%`}
+                </p>
+                <p className="text-hud-text-muted">
+                  전국 월 변동률 {formatSigned(nationalChangeMetrics.latestRate, 3, '%')} · 전월 {formatSigned(nationalChangeMetrics.prevRate, 3, '%')}
+                </p>
+                <p className="text-hud-text-muted">
+                  지역 평균 변화율 {formatSigned(breadth.avgChangeRate, 2, '%')} · 비교 표본 {marketSignal.comparedCount.toLocaleString()}개
+                </p>
+                <p className="text-xs text-hud-text-muted">
+                  계산 기준: 최신월과 직전월 동일 지역 매칭값
+                </p>
+              </div>
             </HudCard>
 
             <HudCard title="상승 상위 지역" subtitle="최근월 대비 변동률 Top 6">
@@ -763,7 +860,7 @@ const RebMarketStats = () => {
                         <span className="text-hud-text-secondary truncate max-w-[72%]" title={item.label}>{item.label}</span>
                         <span className="text-hud-accent-success font-semibold">{formatSigned(item.changeRate, 2, '%')}</span>
                       </div>
-                      <div className="mt-1 flex items-center justify-between text-[11px] text-hud-text-muted">
+                      <div className="mt-1 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 text-[11px] text-hud-text-muted">
                         <span>{item.prevMonth || '-'} → {item.latestMonth}</span>
                         <span>{formatNumber(item.prevValue, 2)} → {formatNumber(item.latestValue, 2)} · 표본 {item.sampleCount}</span>
                       </div>
@@ -784,7 +881,7 @@ const RebMarketStats = () => {
                         <span className="text-hud-text-secondary truncate max-w-[72%]" title={item.label}>{item.label}</span>
                         <span className="text-hud-accent-danger font-semibold">{formatSigned(item.changeRate, 2, '%')}</span>
                       </div>
-                      <div className="mt-1 flex items-center justify-between text-[11px] text-hud-text-muted">
+                      <div className="mt-1 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 text-[11px] text-hud-text-muted">
                         <span>{item.prevMonth || '-'} → {item.latestMonth}</span>
                         <span>{formatNumber(item.prevValue, 2)} → {formatNumber(item.latestValue, 2)} · 표본 {item.sampleCount}</span>
                       </div>
@@ -795,63 +892,66 @@ const RebMarketStats = () => {
             </HudCard>
           </div>
 
-          <HudCard title="소스 정보" subtitle="호출 메타 데이터">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs">
-              <div className="flex items-start justify-between gap-2">
-                <span className="text-hud-text-muted">통계표 ID</span>
-                <span className="text-hud-text-primary font-mono break-all text-right">{statblId}</span>
+          <details className="rounded-lg border border-hud-border-secondary bg-hud-bg-secondary">
+            <summary className="cursor-pointer list-none px-4 py-3 text-sm font-medium text-hud-text-primary">
+              원본/메타 데이터 보기
+            </summary>
+            <div className="px-4 pb-4 pt-1 space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2 text-xs">
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-hud-text-muted">통계표 ID</span>
+                  <span className="text-hud-text-primary font-mono break-all text-right">{statblId}</span>
+                </div>
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-hud-text-muted">서비스명</span>
+                  <span className="text-hud-text-primary text-right">{serviceName || '-'}</span>
+                </div>
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-hud-text-muted">API 총건수</span>
+                  <span className="text-hud-text-primary text-right">{listTotalCount !== null ? listTotalCount.toLocaleString() : '-'}</span>
+                </div>
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-hud-text-muted">resultCode</span>
+                  <span className="text-hud-text-primary font-mono">{resultCode || '-'}</span>
+                </div>
+                <div className="flex items-start justify-between gap-2 md:col-span-2">
+                  <span className="text-hud-text-muted">resultMessage</span>
+                  <span className="text-hud-text-primary text-right">{resultMessage || '-'}</span>
+                </div>
               </div>
-              <div className="flex items-start justify-between gap-2">
-                <span className="text-hud-text-muted">서비스명</span>
-                <span className="text-hud-text-primary text-right">{serviceName || '-'}</span>
-              </div>
-              <div className="flex items-start justify-between gap-2">
-                <span className="text-hud-text-muted">API 총건수</span>
-                <span className="text-hud-text-primary text-right">{listTotalCount !== null ? listTotalCount.toLocaleString() : '-'}</span>
-              </div>
-              <div className="flex items-start justify-between gap-2">
-                <span className="text-hud-text-muted">resultCode</span>
-                <span className="text-hud-text-primary font-mono">{resultCode || '-'}</span>
-              </div>
-              <div className="flex items-start justify-between gap-2 md:col-span-2">
-                <span className="text-hud-text-muted">resultMessage</span>
-                <span className="text-hud-text-primary text-right">{resultMessage || '-'}</span>
-              </div>
-            </div>
-          </HudCard>
 
-          <HudCard title="원본 데이터 미리보기" subtitle="상위 12건">
-            {rows.length === 0 ? (
-              <p className="text-sm text-hud-text-muted">조회된 데이터가 없습니다.</p>
-            ) : (
-              <div className="overflow-x-auto rounded-lg border border-hud-border-secondary">
-                <table className="w-full min-w-[760px] text-sm">
-                  <thead className="bg-hud-bg-primary">
-                    <tr>
-                      {previewColumns.map((column) => (
-                        <th key={column} className="px-3 py-2 text-left text-xs font-semibold text-hud-text-secondary border-b border-hud-border-secondary">{column}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.slice(0, 12).map((row, index) => (
-                      <tr key={`row-${index}`} className="bg-hud-bg-secondary">
+              {rows.length === 0 ? (
+                <p className="text-sm text-hud-text-muted">조회된 데이터가 없습니다.</p>
+              ) : (
+                <div className="overflow-x-auto rounded-lg border border-hud-border-secondary">
+                  <table className="w-full min-w-[760px] text-sm">
+                    <thead className="bg-hud-bg-primary">
+                      <tr>
                         {previewColumns.map((column) => (
-                          <td
-                            key={`${index}-${column}`}
-                            className="px-3 py-2 text-xs text-hud-text-primary border-b border-hud-border-secondary/50 max-w-[220px] truncate"
-                            title={String(row[column] ?? '-')}
-                          >
-                            {row[column] === null || row[column] === undefined || row[column] === '' ? '-' : String(row[column])}
-                          </td>
+                          <th key={column} className="px-3 py-2 text-left text-xs font-semibold text-hud-text-secondary border-b border-hud-border-secondary">{column}</th>
                         ))}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </HudCard>
+                    </thead>
+                    <tbody>
+                      {rows.slice(0, 12).map((row, index) => (
+                        <tr key={`row-${index}`} className="bg-hud-bg-secondary">
+                          {previewColumns.map((column) => (
+                            <td
+                              key={`${index}-${column}`}
+                              className="px-3 py-2 text-xs text-hud-text-primary border-b border-hud-border-secondary/50 max-w-[220px] truncate"
+                              title={String(row[column] ?? '-')}
+                            >
+                              {row[column] === null || row[column] === undefined || row[column] === '' ? '-' : String(row[column])}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </details>
         </>
       )}
 

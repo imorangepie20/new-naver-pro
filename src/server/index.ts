@@ -78,6 +78,71 @@ function rebDebugLog(message: string, payload?: unknown) {
   console.log(`[REB DEBUG] ${message}`, payload);
 }
 
+function formatNotificationDate(dateValue: Date | string | null | undefined) {
+  if (!dateValue) return '-';
+  return new Date(dateValue).toLocaleDateString('ko-KR', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+}
+
+function getDaysUntil(dateValue: Date | string | null | undefined) {
+  if (!dateValue) return null;
+  const target = new Date(dateValue);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const diffMs = target.getTime() - today.getTime();
+  return Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+}
+
+function renderManagedPropertyNotificationTemplate(
+  template: string,
+  property: {
+    articleName?: string | null;
+    contractType?: string | null;
+    contractEndDate?: Date | string | null;
+    managerName?: string | null;
+    managerPhone?: string | null;
+    tenantName?: string | null;
+    tenantPhone?: string | null;
+    address?: string | null;
+  }
+) {
+  const daysLeft = getDaysUntil(property.contractEndDate);
+  const replacements: Record<string, string> = {
+    '{managerName}': property.managerName || '책임자',
+    '{articleName}': property.articleName || '-',
+    '{contractType}': property.contractType || '-',
+    '{contractEndDate}': formatNotificationDate(property.contractEndDate),
+    '{daysLeft}': daysLeft !== null ? String(daysLeft) : '-',
+    '{managerPhone}': property.managerPhone || '-',
+    '{address}': property.address || '-',
+  };
+
+  return Object.entries(replacements).reduce((message, [token, value]) => {
+    return message.split(token).join(value);
+  }, template);
+}
+
+const MANAGED_PROPERTY_NOTIFICATION_TYPES = ['renewal_90', 'renewal_30', 'renewal_15', 'renewal_7', 'renewal_3', 'renewal_1'] as const;
+type ManagedPropertyNotificationType = typeof MANAGED_PROPERTY_NOTIFICATION_TYPES[number];
+
+function isManagedPropertyNotificationType(value: unknown): value is ManagedPropertyNotificationType {
+  return typeof value === 'string' && MANAGED_PROPERTY_NOTIFICATION_TYPES.includes(value as ManagedPropertyNotificationType);
+}
+
+function normalizeNotificationHistory(value: unknown): Record<string, string> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+
+  return Object.entries(value as Record<string, unknown>).reduce<Record<string, string>>((acc, [key, raw]) => {
+    if (typeof raw === 'string' && raw.trim()) {
+      acc[key] = raw;
+    }
+    return acc;
+  }, {});
+}
+
 /**
  * GET /api/public/reb/tables
  * 한국부동산원 통계표 목록 조회
@@ -2366,6 +2431,204 @@ app.get('/api/statistics/address-market', async (c) => {
       return sorted[mid];
     };
 
+    type SegmentMetricRow = {
+      tradeTypeName: string;
+      realEstateTypeName: string;
+      price: number | null;
+      rentPrc: number | null;
+      area: number | null;
+      month: string | null;
+      distanceM?: number | null;
+      articleConfirmYmd?: string | null;
+    };
+
+    const buildSegmentStats = (rows: SegmentMetricRow[], totalCount: number) => {
+      const segmentMap = new Map<
+        string,
+        {
+          realEstateTypeName: string;
+          tradeTypeName: string;
+          count: number;
+          prices: number[];
+          unitPrices: number[];
+          rents: number[];
+          recentMonth: string | null;
+          recentYmd: string | null;
+        }
+      >();
+
+      for (const row of rows) {
+        const key = `${row.realEstateTypeName}__${row.tradeTypeName}`;
+        const current = segmentMap.get(key) || {
+          realEstateTypeName: row.realEstateTypeName,
+          tradeTypeName: row.tradeTypeName,
+          count: 0,
+          prices: [],
+          unitPrices: [],
+          rents: [],
+          recentMonth: null,
+          recentYmd: null,
+        };
+
+        current.count += 1;
+
+        if (typeof row.price === 'number' && row.price > 0) {
+          current.prices.push(row.price);
+          if (typeof row.area === 'number' && row.area > 0) {
+            current.unitPrices.push(row.price / row.area);
+          }
+        }
+
+        if (typeof row.rentPrc === 'number' && row.rentPrc > 0) {
+          current.rents.push(row.rentPrc);
+        }
+
+        const recentKey = row.articleConfirmYmd || row.month || null;
+        if (recentKey && (!current.recentYmd || recentKey > current.recentYmd)) {
+          current.recentYmd = recentKey;
+          current.recentMonth = row.month || (row.articleConfirmYmd ? `${row.articleConfirmYmd.slice(0, 4)}-${row.articleConfirmYmd.slice(4, 6)}` : null);
+        }
+
+        segmentMap.set(key, current);
+      }
+
+      return Array.from(segmentMap.values())
+        .map((item) => {
+          const sortedPrices = [...item.prices].sort((a, b) => a - b);
+          const avgPrice = item.prices.length > 0
+            ? Math.round(item.prices.reduce((sum, value) => sum + value, 0) / item.prices.length)
+            : 0;
+          const avgPricePerArea = item.unitPrices.length > 0
+            ? Math.round(item.unitPrices.reduce((sum, value) => sum + value, 0) / item.unitPrices.length)
+            : 0;
+          const avgRentPrc = item.rents.length > 0
+            ? Math.round(item.rents.reduce((sum, value) => sum + value, 0) / item.rents.length)
+            : 0;
+
+          return {
+            realEstateTypeName: item.realEstateTypeName,
+            tradeTypeName: item.tradeTypeName,
+            count: item.count,
+            ratio: totalCount > 0 ? Number(((item.count / totalCount) * 100).toFixed(1)) : 0,
+            avgPrice,
+            medianPrice: toMedian(sortedPrices),
+            minPrice: sortedPrices.length > 0 ? sortedPrices[0] : 0,
+            maxPrice: sortedPrices.length > 0 ? sortedPrices[sortedPrices.length - 1] : 0,
+            avgPricePerArea,
+            avgRentPrc,
+            recentMonth: item.recentMonth,
+          };
+        })
+        .sort((a, b) => {
+          if (b.count !== a.count) return b.count - a.count;
+          if (b.avgPrice !== a.avgPrice) return b.avgPrice - a.avgPrice;
+          return a.realEstateTypeName.localeCompare(b.realEstateTypeName);
+        });
+    };
+
+    const buildMonthlyTrend = (rows: Array<{ month: string | null; price: number | null }>) => {
+      const monthlyMap = new Map<string, { sum: number; count: number; transCount: number }>();
+      for (const row of rows) {
+        if (!row.month || typeof row.price !== 'number' || row.price <= 0) continue;
+        const prev = monthlyMap.get(row.month) || { sum: 0, count: 0, transCount: 0 };
+        prev.sum += row.price;
+        prev.count += 1;
+        prev.transCount += 1;
+        monthlyMap.set(row.month, prev);
+      }
+
+      return Array.from(monthlyMap.entries())
+        .sort(([a], [b]) => a.localeCompare(b))
+        .slice(-18)
+        .map(([month, val]) => ({
+          month,
+          avgPrice: val.count > 0 ? Math.round(val.sum / val.count) : 0,
+          transactionCount: val.transCount,
+        }));
+    };
+
+    const buildSegmentMonthlyTrends = (rows: SegmentMetricRow[]) => {
+      const segmentMap = new Map<string, SegmentMetricRow[]>();
+      for (const row of rows) {
+        const key = `${row.realEstateTypeName}__${row.tradeTypeName}`;
+        const current = segmentMap.get(key) || [];
+        current.push(row);
+        segmentMap.set(key, current);
+      }
+
+      return Array.from(segmentMap.entries())
+        .flatMap(([key, items]) => {
+          const [realEstateTypeName, tradeTypeName] = key.split('__');
+          return buildMonthlyTrend(items.map((item) => ({ month: item.month, price: item.price }))).map((trend) => ({
+            realEstateTypeName,
+            tradeTypeName,
+            ...trend,
+          }));
+        });
+    };
+
+    const buildDistanceStats = (rows: Array<{ distanceM?: number | null; price: number | null }>, fallbackBand: string) => {
+      const validRows = rows.filter((row): row is { distanceM: number; price: number } =>
+        typeof row.distanceM === 'number' && row.distanceM >= 0 && typeof row.price === 'number' && row.price > 0
+      );
+
+      if (validRows.length === 0) {
+        return [];
+      }
+
+      const bands = [
+        { label: '0~500m', min: 0, max: 500 },
+        { label: '500m~1km', min: 500, max: 1000 },
+        { label: '1km~2km', min: 1000, max: 2000 },
+        { label: '2km+', min: 2000, max: Number.POSITIVE_INFINITY },
+      ];
+
+      const bandStats = bands
+        .map((band) => {
+          const prices = validRows
+            .filter((row) => row.distanceM >= band.min && row.distanceM < band.max)
+            .map((row) => row.price);
+          if (prices.length === 0) return null;
+          return {
+            band: band.label,
+            count: prices.length,
+            avgPrice: Math.round(prices.reduce((sum, value) => sum + value, 0) / prices.length),
+            medianPrice: toMedian(prices),
+          };
+        })
+        .filter((item): item is NonNullable<typeof item> => item !== null);
+
+      if (bandStats.length > 0) return bandStats;
+
+      const prices = validRows.map((row) => row.price);
+      return [{
+        band: fallbackBand,
+        count: prices.length,
+        avgPrice: Math.round(prices.reduce((sum, value) => sum + value, 0) / prices.length),
+        medianPrice: toMedian(prices),
+      }];
+    };
+
+    const buildSegmentDistanceStats = (rows: SegmentMetricRow[]) => {
+      const segmentMap = new Map<string, SegmentMetricRow[]>();
+      for (const row of rows) {
+        const key = `${row.realEstateTypeName}__${row.tradeTypeName}`;
+        const current = segmentMap.get(key) || [];
+        current.push(row);
+        segmentMap.set(key, current);
+      }
+
+      return Array.from(segmentMap.entries())
+        .flatMap(([key, items]) => {
+          const [realEstateTypeName, tradeTypeName] = key.split('__');
+          return buildDistanceStats(items, `${realEstateTypeName} ${tradeTypeName}`).map((stat) => ({
+            realEstateTypeName,
+            tradeTypeName,
+            ...stat,
+          }));
+        });
+    };
+
     let centerLat = Number.isFinite(latRaw) ? latRaw : null;
     let centerLng = Number.isFinite(lngRaw) ? lngRaw : null;
     let centerSource: 'query' | 'address' = 'query';
@@ -2831,6 +3094,9 @@ app.get('/api/statistics/address-market', async (c) => {
       },
       tradeDistribution: [],
       propertyTypeDistribution: [],
+      segmentStats: [],
+      segmentMonthlyTrend: [],
+      segmentDistanceStats: [],
       distanceStats: [],
       monthlyTrend: [],
       recentTransactions: [],
@@ -2899,27 +3165,54 @@ app.get('/api/statistics/address-market', async (c) => {
         name, count, ratio: Number(((count / totalCount) * 100).toFixed(1))
       })).sort((a, b) => b.count - a.count);
 
-      const monthlyMap = new Map<string, { sum: number; count: number; transCount: number }>();
-      for (const row of scopedProps) {
-        if (!row.articleConfirmYmd) continue;
-        const month = row.articleConfirmYmd.substring(0, 6).replace(/(\d{4})(\d{2})/, '$1-$2'); // YYYYMM -> YYYY-MM
-        const prev = monthlyMap.get(month) || { sum: 0, count: 0, transCount: 0 };
-        if (row.dealOrWarrantPrc) {
-          prev.sum += row.dealOrWarrantPrc;
-          prev.count += 1;
-        }
-        prev.transCount += 1;
-        monthlyMap.set(month, prev);
-      }
+      const segmentStats = buildSegmentStats(
+        scopedProps.map((row) => ({
+          tradeTypeName: row.tradeTypeName,
+          realEstateTypeName: row.realEstateTypeName,
+          price: row.dealOrWarrantPrc,
+          rentPrc: row.rentPrc,
+          area: row.area2,
+          month: row.articleConfirmYmd ? `${row.articleConfirmYmd.slice(0, 4)}-${row.articleConfirmYmd.slice(4, 6)}` : null,
+          distanceM: row.distanceM,
+          articleConfirmYmd: row.articleConfirmYmd,
+        })),
+        totalCount
+      );
 
-      const monthlyTrend = Array.from(monthlyMap.entries())
-        .sort(([a], [b]) => a.localeCompare(b))
-        .slice(-18)
-        .map(([month, val]) => ({
-          month,
-          avgPrice: val.count > 0 ? Math.round(val.sum / val.count) : 0,
-          transactionCount: val.transCount,
-        }));
+      const monthlyTrend = buildMonthlyTrend(
+        scopedProps.map((row) => ({
+          month: row.articleConfirmYmd ? `${row.articleConfirmYmd.slice(0, 4)}-${row.articleConfirmYmd.slice(4, 6)}` : null,
+          price: row.dealOrWarrantPrc,
+        }))
+      );
+      const segmentMonthlyTrend = buildSegmentMonthlyTrends(
+        scopedProps.map((row) => ({
+          tradeTypeName: row.tradeTypeName,
+          realEstateTypeName: row.realEstateTypeName,
+          price: row.dealOrWarrantPrc,
+          rentPrc: row.rentPrc,
+          area: row.area2,
+          month: row.articleConfirmYmd ? `${row.articleConfirmYmd.slice(0, 4)}-${row.articleConfirmYmd.slice(4, 6)}` : null,
+          distanceM: row.distanceM,
+          articleConfirmYmd: row.articleConfirmYmd,
+        }))
+      );
+      const distanceStats = buildDistanceStats(
+        scopedProps.map((row) => ({ distanceM: row.distanceM, price: row.dealOrWarrantPrc })),
+        regionContext?.display ? `${regionContext.display} 자체 확보 매물` : '자체 확보 반경내 매물'
+      );
+      const segmentDistanceStats = buildSegmentDistanceStats(
+        scopedProps.map((row) => ({
+          tradeTypeName: row.tradeTypeName,
+          realEstateTypeName: row.realEstateTypeName,
+          price: row.dealOrWarrantPrc,
+          rentPrc: row.rentPrc,
+          area: row.area2,
+          month: row.articleConfirmYmd ? `${row.articleConfirmYmd.slice(0, 4)}-${row.articleConfirmYmd.slice(4, 6)}` : null,
+          distanceM: row.distanceM,
+          articleConfirmYmd: row.articleConfirmYmd,
+        }))
+      );
 
       const recentTransactions = [...scopedProps]
         .sort((a, b) => {
@@ -2957,12 +3250,10 @@ app.get('/api/statistics/address-market', async (c) => {
         },
         tradeDistribution,
         propertyTypeDistribution,
-        distanceStats: [{
-          band: regionContext?.display ? `${regionContext.display} 자체 확보 매물` : '자체 확보 반경내 매물',
-          count: totalCount,
-          avgPrice,
-          medianPrice,
-        }],
+        segmentStats,
+        segmentMonthlyTrend,
+        segmentDistanceStats,
+        distanceStats,
         monthlyTrend,
         recentTransactions,
         mapSamples,
@@ -3210,23 +3501,32 @@ app.get('/api/statistics/address-market', async (c) => {
               }))
               .sort((a, b) => b.count - a.count);
 
-            const monthlyMap = new Map<string, { sum: number; count: number; transCount: number }>();
-            for (const row of normalizedMolit) {
-              const prev = monthlyMap.get(row.month) || { sum: 0, count: 0, transCount: 0 };
-              prev.sum += row.value;
-              prev.count += 1;
-              prev.transCount += 1;
-              monthlyMap.set(row.month, prev);
-            }
-
-            const monthlyTrend = Array.from(monthlyMap.entries())
-              .sort(([a], [b]) => a.localeCompare(b))
-              .slice(-18)
-              .map(([month, val]) => ({
-                month,
-                avgPrice: val.count > 0 ? Math.round(val.sum / val.count) : 0,
-                transactionCount: val.transCount,
-              }));
+            const segmentStats = buildSegmentStats(
+              normalizedMolit.map((row) => ({
+                tradeTypeName: row.tradeTypeName,
+                realEstateTypeName: row.realEstateTypeName,
+                price: row.value,
+                rentPrc: row.rentPrc,
+                area: row.area,
+                month: row.month,
+                articleConfirmYmd: row.articleConfirmYmd,
+              })),
+              totalCount
+            );
+            const monthlyTrend = buildMonthlyTrend(
+              normalizedMolit.map((row) => ({ month: row.month, price: row.value }))
+            );
+            const segmentMonthlyTrend = buildSegmentMonthlyTrends(
+              normalizedMolit.map((row) => ({
+                tradeTypeName: row.tradeTypeName,
+                realEstateTypeName: row.realEstateTypeName,
+                price: row.value,
+                rentPrc: row.rentPrc,
+                area: row.area,
+                month: row.month,
+                articleConfirmYmd: row.articleConfirmYmd,
+              }))
+            );
 
             const recentTransactions = [...normalizedMolit]
               .sort((a, b) => b.articleConfirmYmd.localeCompare(a.articleConfirmYmd))
@@ -3268,6 +3568,9 @@ app.get('/api/statistics/address-market', async (c) => {
               },
               tradeDistribution,
               propertyTypeDistribution,
+              segmentStats,
+              segmentMonthlyTrend,
+              segmentDistanceStats: [],
               distanceStats: [
                 {
                   band: regionContext?.display ? `${regionContext.display} 집계` : '법정동 집계',
@@ -3542,6 +3845,30 @@ app.get('/api/statistics/address-market', async (c) => {
       }))
       .sort((a, b) => b.count - a.count);
 
+    const segmentStats = buildSegmentStats(
+      scopedExternalData.map((row) => ({
+        tradeTypeName: row.tradeTypeName,
+        realEstateTypeName: row.realEstateTypeName,
+        price: row.value,
+        rentPrc: null,
+        area: null,
+        month: row.month,
+        articleConfirmYmd: row.articleConfirmYmd,
+      })),
+      totalCount
+    );
+    const segmentMonthlyTrend = buildSegmentMonthlyTrends(
+      scopedExternalData.map((row) => ({
+        tradeTypeName: row.tradeTypeName,
+        realEstateTypeName: row.realEstateTypeName,
+        price: row.value,
+        rentPrc: null,
+        area: null,
+        month: row.month,
+        articleConfirmYmd: row.articleConfirmYmd,
+      }))
+    );
+
     const distanceStats = [
       {
         band: regionContext?.display ? `${regionContext.display} 집계` : '지역 집계',
@@ -3551,24 +3878,9 @@ app.get('/api/statistics/address-market', async (c) => {
       },
     ];
 
-    const monthlyMap = new Map<string, { sum: number; count: number; transCount: number }>();
-    for (const row of scopedExternalData) {
-      if (!row.month) continue;
-      const prev = monthlyMap.get(row.month) || { sum: 0, count: 0, transCount: 0 };
-      prev.sum += row.value;
-      prev.count += 1;
-      prev.transCount += 1;
-      monthlyMap.set(row.month, prev);
-    }
-
-    const monthlyTrend = Array.from(monthlyMap.entries())
-      .sort(([a], [b]) => a.localeCompare(b))
-      .slice(-18)
-      .map(([month, val]) => ({
-        month,
-        avgPrice: val.count > 0 ? Math.round(val.sum / val.count) : 0,
-        transactionCount: val.transCount,
-      }));
+    const monthlyTrend = buildMonthlyTrend(
+      scopedExternalData.map((row) => ({ month: row.month, price: row.value }))
+    );
 
     const recentTransactions = scopedExternalData
       .sort((a, b) => {
@@ -3615,6 +3927,9 @@ app.get('/api/statistics/address-market', async (c) => {
       },
       tradeDistribution,
       propertyTypeDistribution,
+      segmentStats,
+      segmentMonthlyTrend,
+      segmentDistanceStats: [],
       distanceStats,
       monthlyTrend,
       recentTransactions,
@@ -4408,7 +4723,7 @@ import { join } from 'path';
 const GLOBAL_THEME_FILE = join(process.cwd(), 'global-theme.json');
 
 const DEFAULT_GLOBAL_THEME = {
-  mode: 'dark',
+  mode: 'smart',
   accentColor: 'cyan',
   fontSize: 'medium',
   borderRadius: 'medium',
@@ -4452,6 +4767,21 @@ app.get('/api/global-theme', (c) => {
  */
 app.put('/api/global-theme', async (c) => {
   try {
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { email: true, role: true },
+    });
+
+    const isThemeAdmin = user?.role === 'admin' || user?.email === 'jowoosung@gmail.com';
+    if (!isThemeAdmin) {
+      return c.json({ error: '전역 테마는 최고관리자만 변경할 수 있습니다.' }, 403);
+    }
+
     const body = await c.req.json();
     const { themeMode, accentColor, fontSize, borderRadius, compactMode } = body;
 
@@ -4626,6 +4956,200 @@ app.get('/api/managed-properties', async (c) => {
   } catch (error) {
     console.error('Managed properties fetch error:', error);
     return c.json({ error: error instanceof Error ? error.message : 'Failed to fetch' }, 500);
+  }
+});
+
+/**
+ * POST /api/managed-properties/:id/test-notification
+ * 관리매물 만료 알림 테스트 발송
+ */
+app.post('/api/managed-properties/:id/test-notification', async (c) => {
+  try {
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
+
+    const id = c.req.param('id');
+    const body = await c.req.json().catch(() => ({}));
+    const template = typeof body?.template === 'string' ? body.template.trim() : '';
+    const notificationType = body?.notificationType;
+
+    if (!template) {
+      return c.json({ error: '전송할 메시지 템플릿이 비어 있습니다.' }, 400);
+    }
+
+    if (!isManagedPropertyNotificationType(notificationType)) {
+      return c.json({ error: '유효한 알림 종류를 선택해야 합니다.' }, 400);
+    }
+
+    const property = await prisma.managedProperty.findFirst({
+      where: { id, userId },
+      select: {
+        id: true,
+        articleName: true,
+        contractType: true,
+        contractEndDate: true,
+        managerName: true,
+        managerPhone: true,
+        tenantName: true,
+        tenantPhone: true,
+        address: true,
+        notificationHistory: true,
+      },
+    });
+
+    if (!property) {
+      return c.json({ error: '관리매물을 찾을 수 없습니다.' }, 404);
+    }
+
+    const recipientPhone = property.managerPhone;
+    if (!recipientPhone) {
+      return c.json({ error: '책임자 연락처가 없어 알림을 보낼 수 없습니다.' }, 400);
+    }
+
+    const message = renderManagedPropertyNotificationTemplate(template, property);
+    const sentAt = new Date();
+
+    console.log('[KAKAO NOTIFY TEST]', {
+      propertyId: property.id,
+      articleName: property.articleName,
+      recipientPhone,
+      message,
+    });
+
+    await prisma.managedProperty.update({
+      where: { id: property.id },
+      data: {
+        lastNotificationSentAt: sentAt,
+        notificationHistory: {
+          ...normalizeNotificationHistory(property.notificationHistory),
+          [notificationType]: sentAt.toISOString(),
+        },
+      },
+    });
+
+    return c.json({
+      success: true,
+      simulated: true,
+      notificationType,
+      recipientPhone,
+      message,
+      messageLength: message.length,
+      sentAt: sentAt.toISOString(),
+      info: '현재는 테스트 발송 단계로 서버 로그에 기록됩니다. 카카오 발송 어댑터 연결 후 실제 발송으로 전환됩니다.',
+    });
+  } catch (error) {
+    console.error('Managed property notification test error:', error);
+    return c.json({ error: error instanceof Error ? error.message : 'Failed to send test notification' }, 500);
+  }
+});
+
+/**
+ * POST /api/managed-properties/test-notifications
+ * 현재 선택된 관리매물 목록에 대해 책임자 일괄 알림 테스트 발송
+ */
+app.post('/api/managed-properties/test-notifications', async (c) => {
+  try {
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const template = typeof body?.template === 'string' ? body.template.trim() : '';
+    const notificationType = body?.notificationType;
+    const propertyIds = Array.isArray(body?.propertyIds)
+      ? body.propertyIds.filter((value: unknown): value is string => typeof value === 'string' && value.trim().length > 0)
+      : [];
+
+    if (!template) {
+      return c.json({ error: '전송할 메시지 템플릿이 비어 있습니다.' }, 400);
+    }
+
+    if (propertyIds.length === 0) {
+      return c.json({ error: '알림을 보낼 관리매물을 먼저 선택해야 합니다.' }, 400);
+    }
+
+    if (!isManagedPropertyNotificationType(notificationType)) {
+      return c.json({ error: '유효한 알림 종류를 선택해야 합니다.' }, 400);
+    }
+
+    const properties = await prisma.managedProperty.findMany({
+      where: {
+        userId,
+        id: { in: propertyIds },
+      },
+      select: {
+        id: true,
+        articleName: true,
+        contractType: true,
+        contractEndDate: true,
+        managerName: true,
+        managerPhone: true,
+        address: true,
+        notificationHistory: true,
+      },
+      orderBy: { contractEndDate: 'asc' },
+    });
+
+    const readyTargets = properties.filter((property) => property.managerPhone);
+    const skippedTargets = properties
+      .filter((property) => !property.managerPhone)
+      .map((property) => ({
+        propertyId: property.id,
+        articleName: property.articleName,
+        reason: '책임자 연락처 없음',
+      }));
+
+    for (const property of readyTargets) {
+      const message = renderManagedPropertyNotificationTemplate(template, property);
+      console.log('[KAKAO NOTIFY BATCH TEST]', {
+        propertyId: property.id,
+        articleName: property.articleName,
+        recipientPhone: property.managerPhone,
+        message,
+      });
+    }
+
+    const sentAt = new Date();
+    if (readyTargets.length > 0) {
+      await prisma.$transaction(
+        readyTargets.map((property) =>
+          prisma.managedProperty.update({
+            where: { id: property.id },
+            data: {
+              lastNotificationSentAt: sentAt,
+              notificationHistory: {
+                ...normalizeNotificationHistory(property.notificationHistory),
+                [notificationType]: sentAt.toISOString(),
+              },
+            },
+          })
+        )
+      );
+    }
+
+    return c.json({
+      success: true,
+      simulated: true,
+      notificationType,
+      requestedCount: propertyIds.length,
+      matchedCount: properties.length,
+      sentCount: readyTargets.length,
+      skippedCount: skippedTargets.length,
+      sentTargets: readyTargets.map((property) => ({
+        propertyId: property.id,
+        articleName: property.articleName,
+        recipientPhone: property.managerPhone,
+        sentAt: sentAt.toISOString(),
+      })),
+      skippedTargets,
+      info: '현재는 테스트 발송 단계로 서버 로그에 기록됩니다. 카카오 발송 어댑터 연결 후 실제 발송으로 전환됩니다.',
+    });
+  } catch (error) {
+    console.error('Managed property batch notification test error:', error);
+    return c.json({ error: error instanceof Error ? error.message : 'Failed to send batch notification' }, 500);
   }
 });
 

@@ -1,6 +1,6 @@
 {
-  "mode": "dark",
-  "accentColor": "cyan",
+  "mode": "smart",
+  "accentColor": "slate",
   "fontSize": "medium",
   "borderRadius": "medium",
   "compactMode": false

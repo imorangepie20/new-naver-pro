@@ -39,6 +39,30 @@ interface MonthlyTrendItem {
   transactionCount: number;
 }
 
+interface SegmentStatItem {
+  realEstateTypeName: string;
+  tradeTypeName: string;
+  count: number;
+  ratio: number;
+  avgPrice: number;
+  medianPrice: number;
+  minPrice: number;
+  maxPrice: number;
+  avgPricePerArea: number;
+  avgRentPrc: number;
+  recentMonth: string | null;
+}
+
+interface SegmentMonthlyTrendItem extends MonthlyTrendItem {
+  realEstateTypeName: string;
+  tradeTypeName: string;
+}
+
+interface SegmentDistanceStatItem extends DistanceStatItem {
+  realEstateTypeName: string;
+  tradeTypeName: string;
+}
+
 interface RecentTransactionItem {
   articleNo: string;
   articleName: string;
@@ -102,6 +126,9 @@ interface AddressMarketResult {
   };
   tradeDistribution: DistributionItem[];
   propertyTypeDistribution: DistributionItem[];
+  segmentStats?: SegmentStatItem[];
+  segmentMonthlyTrend?: SegmentMonthlyTrendItem[];
+  segmentDistanceStats?: SegmentDistanceStatItem[];
   distanceStats: DistanceStatItem[];
   monthlyTrend: MonthlyTrendItem[];
   recentTransactions: RecentTransactionItem[];
@@ -209,6 +236,12 @@ function formatYmd(ymd: string | null) {
   return `${ymd.slice(0, 4)}-${ymd.slice(4, 6)}-${ymd.slice(6, 8)}`;
 }
 
+function formatMonthLabel(month: string | null | undefined) {
+  if (!month) return '-';
+  if (/^\d{4}-\d{2}$/.test(month)) return month.replace('-', '.');
+  return month;
+}
+
 function marketSourceMetaText(sourceType?: string) {
   if (!sourceType) return '국토부 실거래가 기준';
   if (sourceType.includes('molit')) return '국토부 실거래가 기준';
@@ -236,6 +269,7 @@ const AddressMarketStats = () => {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AddressMarketResult | null>(null);
   const [selectedMapSample, setSelectedMapSample] = useState<MapSampleItem | null>(null);
+  const [selectedSegmentKey, setSelectedSegmentKey] = useState<string | null>(null);
 
   const analyzeAroundPoint = async (point: MapPoint, monthsBack = '2') => {
     setIsLoading(true);
@@ -331,10 +365,154 @@ const AddressMarketStats = () => {
     void analyzeAroundPoint(selectedPoint);
   }, [radiusMeters, realEstateType, tradeType]);
 
-  const monthlyChart = useMemo(() => {
-    if (!result || result.monthlyTrend.length === 0) return null;
+  const tradeDonut = useMemo(
+    () => buildDonutSegments(result?.tradeDistribution || []),
+    [result]
+  );
 
-    const series = result.monthlyTrend;
+  const propertyDonut = useMemo(
+    () => buildDonutSegments(result?.propertyTypeDistribution || []),
+    [result]
+  );
+
+  const mapMarkerPoints = useMemo(() => {
+    if (!result?.mapSamples || result.mapSamples.length === 0) return [];
+    return result.mapSamples.map((item) => ({
+      id: item.id,
+      latitude: item.latitude,
+      longitude: item.longitude,
+      label: item.articleName || '주변 매물',
+    }));
+  }, [result]);
+
+  const segmentStats = result?.segmentStats || [];
+  const segmentMonthlyTrend = result?.segmentMonthlyTrend || [];
+  const segmentDistanceStats = result?.segmentDistanceStats || [];
+
+  const selectedSegment = useMemo(() => {
+    if (segmentStats.length === 0) return null;
+    if (!selectedSegmentKey) return segmentStats[0];
+    return segmentStats.find((item) => `${item.realEstateTypeName}__${item.tradeTypeName}` === selectedSegmentKey) || segmentStats[0];
+  }, [segmentStats, selectedSegmentKey]);
+
+  useEffect(() => {
+    if (segmentStats.length === 0) {
+      setSelectedSegmentKey(null);
+      return;
+    }
+
+    const preferred = segmentStats.find((item) => {
+      const typeMatches = !realEstateType || item.realEstateTypeName === PROPERTY_TYPE_OPTIONS.find((opt) => opt.value === realEstateType)?.label;
+      const tradeMatches = !tradeType || item.tradeTypeName === TRADE_TYPE_OPTIONS.find((opt) => opt.value === tradeType)?.label;
+      return typeMatches && tradeMatches;
+    }) || segmentStats[0];
+
+    setSelectedSegmentKey(`${preferred.realEstateTypeName}__${preferred.tradeTypeName}`);
+  }, [segmentStats, realEstateType, tradeType]);
+
+  const segmentMatrix = useMemo(() => {
+    if (!result || segmentStats.length === 0) return null;
+
+    const tradeNames = Array.from(new Set([
+      ...result.tradeDistribution.map((item) => item.name),
+      ...segmentStats.map((item) => item.tradeTypeName),
+    ]));
+
+    const propertyNames = Array.from(new Set([
+      ...result.propertyTypeDistribution.map((item) => item.name),
+      ...segmentStats.map((item) => item.realEstateTypeName),
+    ]));
+
+    const cellMap = new Map(
+      segmentStats.map((item) => [`${item.realEstateTypeName}__${item.tradeTypeName}`, item] as const)
+    );
+
+    const rows = propertyNames.map((propertyName) => {
+      const cells = tradeNames.map((tradeName) => cellMap.get(`${propertyName}__${tradeName}`) || null);
+      const totalCount = cells.reduce((sum, cell) => sum + (cell?.count || 0), 0);
+      return { propertyName, cells, totalCount };
+    });
+
+    const columnTotals = tradeNames.map((tradeName) =>
+      rows.reduce((sum, row) => {
+        const matched = row.cells.find((cell) => cell?.tradeTypeName === tradeName);
+        return sum + (matched?.count || 0);
+      }, 0)
+    );
+
+    return {
+      tradeNames,
+      rows,
+      columnTotals,
+      maxRatio: Math.max(...segmentStats.map((item) => item.ratio), 0),
+    };
+  }, [result, segmentStats]);
+
+  const segmentHighlights = useMemo(() => {
+    if (!result || segmentStats.length === 0) return null;
+
+    const byVolume = [...segmentStats].sort((a, b) => b.count - a.count || b.avgPrice - a.avgPrice);
+    const byPrice = [...segmentStats].sort((a, b) => b.avgPrice - a.avgPrice || b.count - a.count);
+    const byArea = [...segmentStats]
+      .filter((item) => item.avgPricePerArea > 0)
+      .sort((a, b) => b.avgPricePerArea - a.avgPricePerArea || b.count - a.count);
+
+    return [
+      {
+        label: '최다 표본',
+        item: byVolume[0] || null,
+        value: byVolume[0] ? `${byVolume[0].count.toLocaleString()}건` : '-',
+        hint: byVolume[0] ? `비중 ${byVolume[0].ratio}%` : '세그먼트 데이터 없음',
+      },
+      {
+        label: '최고 평균가',
+        item: byPrice[0] || null,
+        value: byPrice[0] ? formatPriceMan(byPrice[0].avgPrice) : '-',
+        hint: byPrice[0] ? `중위가 ${formatPriceMan(byPrice[0].medianPrice)}` : '세그먼트 데이터 없음',
+      },
+      {
+        label: '최고 평단가',
+        item: byArea[0] || null,
+        value: byArea[0] ? `${byArea[0].avgPricePerArea.toLocaleString()}만/㎡` : '-',
+        hint: byArea[0] ? `표본 ${byArea[0].count.toLocaleString()}건` : '면적 기반 데이터 없음',
+      },
+    ];
+  }, [result, segmentStats]);
+
+  const activeMonthlyTrend = useMemo(() => {
+    if (!selectedSegment) return result?.monthlyTrend || [];
+    const filtered = segmentMonthlyTrend.filter(
+      (item) =>
+        item.realEstateTypeName === selectedSegment.realEstateTypeName &&
+        item.tradeTypeName === selectedSegment.tradeTypeName
+    );
+    return filtered.length > 0 ? filtered : (result?.monthlyTrend || []);
+  }, [selectedSegment, segmentMonthlyTrend, result]);
+
+  const activeDistanceStats = useMemo(() => {
+    if (!selectedSegment) return result?.distanceStats || [];
+    const filtered = segmentDistanceStats.filter(
+      (item) =>
+        item.realEstateTypeName === selectedSegment.realEstateTypeName &&
+        item.tradeTypeName === selectedSegment.tradeTypeName
+    );
+    return filtered.length > 0 ? filtered : (result?.distanceStats || []);
+  }, [selectedSegment, segmentDistanceStats, result]);
+
+  const activeRecentTransactions = useMemo(() => {
+    if (!selectedSegment) return result?.recentTransactions || [];
+    const filtered = (result?.recentTransactions || []).filter(
+      (item) =>
+        item.realEstateTypeName === selectedSegment.realEstateTypeName &&
+        item.tradeTypeName === selectedSegment.tradeTypeName
+    );
+    return filtered.length > 0 ? filtered : (result?.recentTransactions || []);
+  }, [selectedSegment, result]);
+
+  const monthlyChart = useMemo(() => {
+    if (activeMonthlyTrend.length === 0) return null;
+
+    const series = activeMonthlyTrend;
     const priceValues = series.map((x) => x.avgPrice);
     const txValues = series.map((x) => x.transactionCount);
     const minPrice = Math.min(...priceValues);
@@ -376,32 +554,11 @@ const AddressMarketStats = () => {
       startMonth: series[0]?.month || '',
       endMonth: series[series.length - 1]?.month || '',
     };
-  }, [result]);
-
-  const tradeDonut = useMemo(
-    () => buildDonutSegments(result?.tradeDistribution || []),
-    [result]
-  );
-
-  const propertyDonut = useMemo(
-    () => buildDonutSegments(result?.propertyTypeDistribution || []),
-    [result]
-  );
-
-  const mapMarkerPoints = useMemo(() => {
-    if (!result?.mapSamples || result.mapSamples.length === 0) return [];
-    return result.mapSamples.map((item) => ({
-      id: item.id,
-      latitude: item.latitude,
-      longitude: item.longitude,
-      label: item.articleName || '주변 매물',
-    }));
-  }, [result]);
+  }, [activeMonthlyTrend]);
 
   const hasDistanceValues = useMemo(() => {
-    if (!result) return false;
-    return result.recentTransactions.some((tx) => typeof tx.distanceM === 'number' && tx.distanceM > 0);
-  }, [result]);
+    return activeRecentTransactions.some((tx) => typeof tx.distanceM === 'number' && tx.distanceM > 0);
+  }, [activeRecentTransactions]);
 
   const handleAnalyze = async () => {
     if (!selectedPoint) {
@@ -592,14 +749,99 @@ const AddressMarketStats = () => {
             </HudCard>
           )}
 
-          <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
-            <HudCard className="p-4"><p className="text-xs text-hud-text-muted">매물 수</p><p className="text-xl font-bold text-hud-text-primary mt-1">{result.summary.totalCount.toLocaleString()}</p></HudCard>
-            <HudCard className="p-4"><p className="text-xs text-hud-text-muted">평균가</p><p className="text-xl font-bold text-hud-accent-primary mt-1">{formatPriceMan(result.summary.avgPrice)}</p></HudCard>
-            <HudCard className="p-4"><p className="text-xs text-hud-text-muted">중위가</p><p className="text-xl font-bold text-hud-accent-info mt-1">{formatPriceMan(result.summary.medianPrice)}</p></HudCard>
-            <HudCard className="p-4"><p className="text-xs text-hud-text-muted">최저가</p><p className="text-xl font-bold text-hud-accent-success mt-1">{formatPriceMan(result.summary.minPrice)}</p></HudCard>
-            <HudCard className="p-4"><p className="text-xs text-hud-text-muted">최고가</p><p className="text-xl font-bold text-hud-accent-warning mt-1">{formatPriceMan(result.summary.maxPrice)}</p></HudCard>
-            <HudCard className="p-4"><p className="text-xs text-hud-text-muted">평균 평단가(만원/㎡)</p><p className="text-xl font-bold text-hud-text-primary mt-1">{result.summary.avgPricePerArea.toLocaleString()}</p></HudCard>
-          </div>
+          <HudCard
+            title="세그먼트 KPI"
+            subtitle={selectedSegment
+              ? `${selectedSegment.realEstateTypeName} · ${selectedSegment.tradeTypeName} 조합 기준 핵심 지표`
+              : '세그먼트 데이터가 없으면 전체 요약만 표시됩니다.'}
+          >
+            {segmentStats.length > 0 ? (
+              <div className="space-y-4">
+                <div className="flex flex-wrap gap-2">
+                  {segmentStats.map((segment) => {
+                    const key = `${segment.realEstateTypeName}__${segment.tradeTypeName}`;
+                    const isActive = key === selectedSegmentKey;
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => setSelectedSegmentKey(key)}
+                        className={`px-3 py-2 rounded-lg border text-xs transition-colors ${
+                          isActive
+                            ? 'border-hud-accent-primary bg-hud-accent-primary/15 text-hud-accent-primary'
+                            : 'border-hud-border-secondary bg-hud-bg-primary text-hud-text-secondary hover:border-hud-accent-info/50'
+                        }`}
+                      >
+                        {segment.realEstateTypeName} · {segment.tradeTypeName}
+                        <span className="ml-2 text-[11px] opacity-80">{segment.count.toLocaleString()}건</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {selectedSegment && (
+                  <>
+                    <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
+                      <HudCard className="p-4"><p className="text-xs text-hud-text-muted">매물 수</p><p className="text-xl font-bold text-hud-text-primary mt-1">{selectedSegment.count.toLocaleString()}</p><p className="text-xs text-hud-text-muted mt-1">전체의 {selectedSegment.ratio}%</p></HudCard>
+                      <HudCard className="p-4"><p className="text-xs text-hud-text-muted">평균가</p><p className="text-xl font-bold text-hud-accent-primary mt-1">{formatPriceMan(selectedSegment.avgPrice)}</p><p className="text-xs text-hud-text-muted mt-1">최근 {formatMonthLabel(selectedSegment.recentMonth)}</p></HudCard>
+                      <HudCard className="p-4"><p className="text-xs text-hud-text-muted">중위가</p><p className="text-xl font-bold text-hud-accent-info mt-1">{formatPriceMan(selectedSegment.medianPrice)}</p><p className="text-xs text-hud-text-muted mt-1">대표 시세 중심값</p></HudCard>
+                      <HudCard className="p-4"><p className="text-xs text-hud-text-muted">최저가</p><p className="text-xl font-bold text-hud-accent-success mt-1">{formatPriceMan(selectedSegment.minPrice)}</p><p className="text-xs text-hud-text-muted mt-1">세그먼트 하단</p></HudCard>
+                      <HudCard className="p-4"><p className="text-xs text-hud-text-muted">최고가</p><p className="text-xl font-bold text-hud-accent-warning mt-1">{formatPriceMan(selectedSegment.maxPrice)}</p><p className="text-xs text-hud-text-muted mt-1">세그먼트 상단</p></HudCard>
+                      <HudCard className="p-4">
+                        <p className="text-xs text-hud-text-muted">{selectedSegment.avgRentPrc > 0 ? '평균 월세' : '평균 평단가'}</p>
+                        <p className="text-xl font-bold text-hud-text-primary mt-1">
+                          {selectedSegment.avgRentPrc > 0
+                            ? `${selectedSegment.avgRentPrc.toLocaleString()}만`
+                            : selectedSegment.avgPricePerArea > 0
+                              ? `${selectedSegment.avgPricePerArea.toLocaleString()}만/㎡`
+                              : '-'}
+                        </p>
+                        <p className="text-xs text-hud-text-muted mt-1">
+                          {selectedSegment.avgRentPrc > 0 ? '월세 거래 조합 기준' : '면적 정보 포함 표본 기준'}
+                        </p>
+                      </HudCard>
+                    </div>
+
+                    <div className="flex flex-wrap gap-4 text-xs text-hud-text-muted">
+                      <span>선택 세그먼트: {selectedSegment.realEstateTypeName} / {selectedSegment.tradeTypeName}</span>
+                      <span>전체 요약 매물 수: {result.summary.totalCount.toLocaleString()}건</span>
+                      <span>전체 평균가: {formatPriceMan(result.summary.avgPrice)}</span>
+                    </div>
+                  </>
+                )}
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
+                <HudCard className="p-4"><p className="text-xs text-hud-text-muted">매물 수</p><p className="text-xl font-bold text-hud-text-primary mt-1">{result.summary.totalCount.toLocaleString()}</p></HudCard>
+                <HudCard className="p-4"><p className="text-xs text-hud-text-muted">평균가</p><p className="text-xl font-bold text-hud-accent-primary mt-1">{formatPriceMan(result.summary.avgPrice)}</p></HudCard>
+                <HudCard className="p-4"><p className="text-xs text-hud-text-muted">중위가</p><p className="text-xl font-bold text-hud-accent-info mt-1">{formatPriceMan(result.summary.medianPrice)}</p></HudCard>
+                <HudCard className="p-4"><p className="text-xs text-hud-text-muted">최저가</p><p className="text-xl font-bold text-hud-accent-success mt-1">{formatPriceMan(result.summary.minPrice)}</p></HudCard>
+                <HudCard className="p-4"><p className="text-xs text-hud-text-muted">최고가</p><p className="text-xl font-bold text-hud-accent-warning mt-1">{formatPriceMan(result.summary.maxPrice)}</p></HudCard>
+                <HudCard className="p-4"><p className="text-xs text-hud-text-muted">평균 평단가(만원/㎡)</p><p className="text-xl font-bold text-hud-text-primary mt-1">{result.summary.avgPricePerArea.toLocaleString()}</p></HudCard>
+              </div>
+            )}
+          </HudCard>
+
+          {segmentHighlights && (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {segmentHighlights.map((highlight) => (
+                <HudCard key={highlight.label} className="p-4">
+                  <p className="text-xs text-hud-text-muted">{highlight.label}</p>
+                  {highlight.item ? (
+                    <>
+                      <p className="text-sm font-semibold text-hud-text-primary mt-1">
+                        {highlight.item.realEstateTypeName} · {highlight.item.tradeTypeName}
+                      </p>
+                      <p className="text-lg font-bold text-hud-accent-primary mt-2">{highlight.value}</p>
+                      <p className="text-xs text-hud-text-muted mt-1">{highlight.hint}</p>
+                    </>
+                  ) : (
+                    <p className="text-sm text-hud-text-muted mt-2">{highlight.hint}</p>
+                  )}
+                </HudCard>
+              ))}
+            </div>
+          )}
 
           {result.summary.infrastructure && (
             <HudCard title="주요 상권 및 표본 인프라" subtitle={`반경 ${result.filters.radiusMeters}m 내외`}>
@@ -615,8 +857,13 @@ const AddressMarketStats = () => {
           )}
 
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-            <HudCard title="월별 평균가 추이" subtitle={`평균가(선) · 거래건수(막대) / 중심 ${result.center.latitude.toFixed(5)}, ${result.center.longitude.toFixed(5)}`}>
-              {result.monthlyTrend.length === 0 ? (
+            <HudCard
+              title="월별 평균가 추이"
+              subtitle={selectedSegment
+                ? `${selectedSegment.realEstateTypeName} · ${selectedSegment.tradeTypeName} / 평균가(선) · 거래건수(막대)`
+                : `평균가(선) · 거래건수(막대) / 중심 ${result.center.latitude.toFixed(5)}, ${result.center.longitude.toFixed(5)}`}
+            >
+              {activeMonthlyTrend.length === 0 ? (
                 <p className="text-sm text-hud-text-muted">월별 추이 데이터가 없습니다.</p>
               ) : (
                 <div>
@@ -754,7 +1001,163 @@ const AddressMarketStats = () => {
             </HudCard>
           </div>
 
-          <HudCard title="거리 구간별 시세" subtitle="반경 내 평균가/중위가 비교">
+          <HudCard
+            title="매물유형 × 거래유형 교차 분석"
+            subtitle="조합별 표본 수, 평균가, 비중을 함께 비교합니다."
+          >
+            {!segmentMatrix ? (
+              <p className="text-sm text-hud-text-muted">조합별 세그먼트 데이터가 없습니다.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[860px] border-separate border-spacing-0">
+                  <thead>
+                    <tr>
+                      <th className="sticky left-0 z-10 bg-hud-bg-secondary py-3 px-3 text-left text-xs text-hud-text-muted border-b border-hud-border-secondary">
+                        매물유형
+                      </th>
+                      {segmentMatrix.tradeNames.map((tradeName) => (
+                        <th key={`segment-col-${tradeName}`} className="bg-hud-bg-secondary py-3 px-3 text-left text-xs text-hud-text-muted border-b border-hud-border-secondary">
+                          {tradeName}
+                        </th>
+                      ))}
+                      <th className="bg-hud-bg-secondary py-3 px-3 text-right text-xs text-hud-text-muted border-b border-hud-border-secondary">
+                        합계
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {segmentMatrix.rows.map((row) => (
+                      <tr key={`segment-row-${row.propertyName}`}>
+                        <td className="sticky left-0 z-10 bg-hud-bg-secondary/95 py-3 px-3 align-top border-b border-hud-border-secondary/60">
+                          <p className="text-sm font-semibold text-hud-text-primary">{row.propertyName}</p>
+                          <p className="text-xs text-hud-text-muted mt-1">{row.totalCount.toLocaleString()}건</p>
+                        </td>
+                        {row.cells.map((cell, index) => {
+                          const intensity = cell && segmentMatrix.maxRatio > 0
+                            ? 0.12 + (cell.ratio / segmentMatrix.maxRatio) * 0.28
+                            : 0;
+
+                          return (
+                            <td
+                              key={`segment-cell-${row.propertyName}-${segmentMatrix.tradeNames[index]}`}
+                              className="py-3 px-3 align-top border-b border-hud-border-secondary/60"
+                              style={cell ? { background: `linear-gradient(135deg, rgba(56, 189, 248, ${intensity}) 0%, rgba(15, 23, 42, 0.04) 100%)` } : undefined}
+                            >
+                              {cell ? (
+                                <div className="space-y-1">
+                                  <p className="text-sm font-semibold text-hud-text-primary">{cell.count.toLocaleString()}건</p>
+                                  <p className="text-xs text-hud-text-muted">비중 {cell.ratio}%</p>
+                                  <p className="text-xs text-hud-accent-primary">평균가 {formatPriceMan(cell.avgPrice)}</p>
+                                  <p className="text-xs text-hud-text-muted">
+                                    {cell.avgRentPrc > 0
+                                      ? `평균 월세 ${cell.avgRentPrc.toLocaleString()}만`
+                                      : cell.avgPricePerArea > 0
+                                        ? `평단가 ${cell.avgPricePerArea.toLocaleString()}만/㎡`
+                                        : `중위가 ${formatPriceMan(cell.medianPrice)}`}
+                                  </p>
+                                </div>
+                              ) : (
+                                <span className="text-xs text-hud-text-muted">-</span>
+                              )}
+                            </td>
+                          );
+                        })}
+                        <td className="py-3 px-3 text-right align-top border-b border-hud-border-secondary/60">
+                          <p className="text-sm font-semibold text-hud-text-primary">{row.totalCount.toLocaleString()}건</p>
+                          <p className="text-xs text-hud-text-muted">
+                            {result.summary.totalCount > 0 ? `${((row.totalCount / result.summary.totalCount) * 100).toFixed(1)}%` : '-'}
+                          </p>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr>
+                      <td className="sticky left-0 z-10 bg-hud-bg-secondary py-3 px-3 text-sm font-semibold text-hud-text-primary border-t border-hud-border-secondary">
+                        거래유형 합계
+                      </td>
+                      {segmentMatrix.columnTotals.map((count, index) => (
+                        <td key={`segment-total-${segmentMatrix.tradeNames[index]}`} className="bg-hud-bg-secondary py-3 px-3 text-sm text-hud-text-primary border-t border-hud-border-secondary">
+                          {count.toLocaleString()}건
+                        </td>
+                      ))}
+                      <td className="bg-hud-bg-secondary py-3 px-3 text-right text-sm font-semibold text-hud-accent-primary border-t border-hud-border-secondary">
+                        {result.summary.totalCount.toLocaleString()}건
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+          </HudCard>
+
+          <HudCard
+            title="세부 세그먼트 랭킹"
+            subtitle="조합별 가격대와 최근 집계월을 빠르게 비교합니다."
+          >
+            {segmentStats.length === 0 ? (
+              <p className="text-sm text-hud-text-muted">세부 세그먼트 데이터가 없습니다.</p>
+            ) : (
+              <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-3">
+                {segmentStats.map((segment) => (
+                  <div
+                    key={`${segment.realEstateTypeName}-${segment.tradeTypeName}`}
+                    className="rounded-xl border border-hud-border-secondary bg-hud-bg-primary/70 p-4"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-hud-text-primary">
+                          {segment.realEstateTypeName} · {segment.tradeTypeName}
+                        </p>
+                        <p className="text-xs text-hud-text-muted mt-1">
+                          표본 {segment.count.toLocaleString()}건 · 전체 {segment.ratio}%
+                        </p>
+                      </div>
+                      <div className="px-2 py-1 rounded-md border border-hud-accent-info/30 bg-hud-accent-info/10 text-xs text-hud-accent-info">
+                        최근 {formatMonthLabel(segment.recentMonth)}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 mt-4">
+                      <div className="rounded-lg border border-hud-border-secondary/70 bg-hud-bg-secondary/60 p-3">
+                        <p className="text-[11px] text-hud-text-muted">평균가</p>
+                        <p className="text-sm font-semibold text-hud-accent-primary mt-1">{formatPriceMan(segment.avgPrice)}</p>
+                      </div>
+                      <div className="rounded-lg border border-hud-border-secondary/70 bg-hud-bg-secondary/60 p-3">
+                        <p className="text-[11px] text-hud-text-muted">중위가</p>
+                        <p className="text-sm font-semibold text-hud-text-primary mt-1">{formatPriceMan(segment.medianPrice)}</p>
+                      </div>
+                      <div className="rounded-lg border border-hud-border-secondary/70 bg-hud-bg-secondary/60 p-3">
+                        <p className="text-[11px] text-hud-text-muted">가격 범위</p>
+                        <p className="text-xs font-medium text-hud-text-primary mt-1">
+                          {formatPriceMan(segment.minPrice)} ~ {formatPriceMan(segment.maxPrice)}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-hud-border-secondary/70 bg-hud-bg-secondary/60 p-3">
+                        <p className="text-[11px] text-hud-text-muted">
+                          {segment.avgRentPrc > 0 ? '평균 월세' : '평균 평단가'}
+                        </p>
+                        <p className="text-sm font-semibold text-hud-text-primary mt-1">
+                          {segment.avgRentPrc > 0
+                            ? `${segment.avgRentPrc.toLocaleString()}만`
+                            : segment.avgPricePerArea > 0
+                              ? `${segment.avgPricePerArea.toLocaleString()}만/㎡`
+                              : '-'}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </HudCard>
+
+          <HudCard
+            title="거리 구간별 시세"
+            subtitle={selectedSegment
+              ? `${selectedSegment.realEstateTypeName} · ${selectedSegment.tradeTypeName} 기준 평균가/중위가 비교`
+              : '반경 내 평균가/중위가 비교'}
+          >
             <div className="overflow-x-auto">
               <table className="w-full min-w-[640px]">
                 <thead>
@@ -766,7 +1169,7 @@ const AddressMarketStats = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {result.distanceStats.map((item) => (
+                  {activeDistanceStats.map((item) => (
                     <tr key={item.band} className="border-b border-hud-border-secondary/50">
                       <td className="py-2 text-sm text-hud-text-primary">{item.band}</td>
                       <td className="py-2 text-sm text-hud-text-primary text-right">{item.count.toLocaleString()}</td>
@@ -779,7 +1182,12 @@ const AddressMarketStats = () => {
             </div>
           </HudCard>
 
-          <HudCard title="최근 거래/등록 표본" subtitle="중심점 주변 최신순 30건">
+          <HudCard
+            title="최근 거래/등록 표본"
+            subtitle={selectedSegment
+              ? `${selectedSegment.realEstateTypeName} · ${selectedSegment.tradeTypeName} 최신 표본 우선`
+              : '중심점 주변 최신순 30건'}
+          >
             <div className="overflow-x-auto">
               <table className="w-full min-w-[980px]">
                 <thead>
@@ -796,7 +1204,7 @@ const AddressMarketStats = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {result.recentTransactions.map((tx) => (
+                  {activeRecentTransactions.map((tx) => (
                     <tr key={`${tx.articleNo}-${tx.articleConfirmYmd}`} className="border-b border-hud-border-secondary/40">
                       <td className="py-2 px-1 text-xs text-hud-text-secondary">{formatYmd(tx.articleConfirmYmd)}</td>
                       <td className="py-2 px-1 text-sm text-hud-text-primary">

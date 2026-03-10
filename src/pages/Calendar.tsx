@@ -24,7 +24,9 @@ import {
     LayoutGrid,
     AlertTriangle,
     Copy,
-    Briefcase,
+    Search,
+    Target,
+    ArrowRight,
 } from 'lucide-react'
 import {
     format,
@@ -39,6 +41,7 @@ import {
     startOfWeek,
     endOfWeek,
     addDays,
+    addHours,
 } from 'date-fns'
 import { ko } from 'date-fns/locale'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -166,6 +169,57 @@ const detectConflicts = (newEvent: { startTime: string; endTime?: string | null 
             (newStart <= eventStart && newEnd >= eventEnd)
         )
     })
+}
+
+const getTypeLabel = (type: string) => {
+    switch (type) {
+        case 'meeting': return '회의'
+        case 'presentation': return '발표'
+        case 'task': return '업무'
+        case 'event': return '이벤트'
+        case 'break': return '휴식'
+        default: return '기본'
+    }
+}
+
+const toDateTimeLocalValue = (date: Date) => format(date, "yyyy-MM-dd'T'HH:mm")
+
+const getSuggestedSlots = (date: Date, schedules: Schedule[]) => {
+    const daySchedules = schedules
+        .filter(schedule => isSameDay(new Date(schedule.startTime), date))
+        .filter(schedule => !schedule.isAllDay)
+        .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
+
+    if (daySchedules.length === 0) {
+        return ['09:00 - 11:00', '13:00 - 15:00', '16:00 - 18:00']
+    }
+
+    const start = new Date(date)
+    start.setHours(9, 0, 0, 0)
+    const end = new Date(date)
+    end.setHours(18, 0, 0, 0)
+
+    const slots: string[] = []
+    let cursor = start
+
+    for (const schedule of daySchedules) {
+        const scheduleStart = new Date(schedule.startTime)
+        const scheduleEnd = schedule.endTime ? new Date(schedule.endTime) : addHours(scheduleStart, 1)
+
+        if (scheduleStart.getTime() - cursor.getTime() >= 60 * 60 * 1000) {
+            slots.push(`${format(cursor, 'HH:mm')} - ${format(scheduleStart, 'HH:mm')}`)
+        }
+
+        if (scheduleEnd > cursor) {
+            cursor = scheduleEnd
+        }
+    }
+
+    if (end.getTime() - cursor.getTime() >= 60 * 60 * 1000) {
+        slots.push(`${format(cursor, 'HH:mm')} - ${format(end, 'HH:mm')}`)
+    }
+
+    return slots.slice(0, 3)
 }
 
 // ============================================
@@ -693,12 +747,13 @@ const ScheduleModal = ({ isOpen, onClose, onSave, onDelete, schedule, selectedDa
         } else {
             const now = new Date()
             const baseDate = selectedDate || now
-            const dateStr = format(baseDate, "yyyy-MM-dd'T'HH:mm")
+            const dateStr = toDateTimeLocalValue(baseDate)
+            const endDateStr = toDateTimeLocalValue(addHours(baseDate, 1))
             setFormData({
                 title: '',
                 description: '',
                 startTime: dateStr,
-                endTime: '',
+                endTime: endDateStr,
                 type: 'default',
                 location: '',
                 isAllDay: false,
@@ -711,6 +766,14 @@ const ScheduleModal = ({ isOpen, onClose, onSave, onDelete, schedule, selectedDa
             })
         }
     }, [isOpen, schedule, selectedDate])
+
+    useEffect(() => {
+        if (!formData.startTime || formData.isAllDay) return
+        const suggestedEnd = toDateTimeLocalValue(addHours(new Date(formData.startTime), 1))
+        if (!formData.endTime || new Date(formData.endTime) <= new Date(formData.startTime)) {
+            setFormData(prev => prev.endTime === suggestedEnd ? prev : ({ ...prev, endTime: suggestedEnd }))
+        }
+    }, [formData.startTime, formData.isAllDay, formData.endTime])
 
     // AI 제안 적용
     const applyAiSuggestion = () => {
@@ -994,12 +1057,20 @@ const Calendar = () => {
     const [currentDate, setCurrentDate] = useState(new Date())
     const [viewType, setViewType] = useState<ViewType>('month')
     const [schedules, setSchedules] = useState<Schedule[]>([])
+    const [searchQuery, setSearchQuery] = useState('')
+    const [typeFilter, setTypeFilter] = useState('all')
     const [isLoading, setIsLoading] = useState(true)
     const [isModalOpen, setIsModalOpen] = useState(false)
     const [editingSchedule, setEditingSchedule] = useState<Schedule | null>(null)
     const [selectedDate, setSelectedDate] = useState<Date | null>(null)
+    const [focusedDate, setFocusedDate] = useState(new Date())
     const [draggedSchedule, setDraggedSchedule] = useState<Schedule | null>(null)
     const [conflicts, setConflicts] = useState<Schedule[]>([])
+    const [quickAddForm, setQuickAddForm] = useState({
+        title: '',
+        startTime: toDateTimeLocalValue(new Date()),
+        type: 'default',
+    })
 
     // 현재 달의 공휴일
     const holidaysInMonth = useMemo(() => {
@@ -1045,6 +1116,54 @@ const Calendar = () => {
     useEffect(() => {
         fetchSchedules()
     }, [currentDate])
+
+    useEffect(() => {
+        setQuickAddForm(prev => ({
+            ...prev,
+            startTime: toDateTimeLocalValue(focusedDate),
+        }))
+    }, [focusedDate])
+
+    const filteredSchedules = useMemo(() => {
+        const query = searchQuery.trim().toLowerCase()
+        return schedules.filter(schedule => {
+            const matchesType = typeFilter === 'all' || schedule.type === typeFilter
+            if (!matchesType) return false
+            if (!query) return true
+            const bag = `${schedule.title} ${schedule.description || ''} ${schedule.location || ''}`.toLowerCase()
+            return bag.includes(query)
+        })
+    }, [schedules, searchQuery, typeFilter])
+
+    const focusDateSchedules = useMemo(() => {
+        return filteredSchedules
+            .filter(schedule => isSameDay(new Date(schedule.startTime), focusedDate))
+            .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
+    }, [filteredSchedules, focusedDate])
+
+    const nextSchedules = useMemo(() => {
+        const now = new Date()
+        return filteredSchedules
+            .filter(schedule => new Date(schedule.startTime) >= now)
+            .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
+            .slice(0, 5)
+    }, [filteredSchedules])
+
+    const busiestDay = useMemo(() => {
+        const counts = new Map<string, number>()
+        filteredSchedules.forEach(schedule => {
+            const key = format(new Date(schedule.startTime), 'yyyy-MM-dd')
+            counts.set(key, (counts.get(key) || 0) + 1)
+        })
+        const entries = Array.from(counts.entries()).sort((a, b) => b[1] - a[1])
+        if (entries.length === 0) return null
+        return {
+            date: new Date(entries[0][0]),
+            count: entries[0][1],
+        }
+    }, [filteredSchedules])
+
+    const suggestedSlots = useMemo(() => getSuggestedSlots(focusedDate, schedules), [focusedDate, schedules])
 
     // 충돌 감지
     const checkConflicts = (startTime: string, endTime?: string | null, excludeId?: string) => {
@@ -1092,6 +1211,31 @@ const Calendar = () => {
         }
     }
 
+    const handleQuickAdd = async () => {
+        if (!quickAddForm.title.trim()) return
+        const ai = detectEventType(quickAddForm.title)
+        await handleSaveSchedule({
+            title: quickAddForm.title.trim(),
+            description: '',
+            startTime: quickAddForm.startTime,
+            endTime: toDateTimeLocalValue(addHours(new Date(quickAddForm.startTime), 1)),
+            type: quickAddForm.type === 'default' ? ai.type : quickAddForm.type,
+            location: '',
+            isAllDay: false,
+            isRecurring: false,
+            recurrenceRule: '',
+            recurrenceEnd: '',
+            color: '',
+            priority: ai.priority,
+            attendees: '',
+        })
+        setQuickAddForm({
+            title: '',
+            startTime: toDateTimeLocalValue(focusedDate),
+            type: 'default',
+        })
+    }
+
     // 일정 삭제
     const handleDeleteSchedule = async (id: string) => {
         try {
@@ -1111,16 +1255,19 @@ const Calendar = () => {
 
     // 날짜 클릭 (일정 생성)
     const handleDateClick = (date: Date) => {
+        setCurrentDate(date)
         setSelectedDate(date)
-        setEditingSchedule(null)
-        setConflicts(checkConflicts(date.toISOString()))
-        setIsModalOpen(true)
+        setFocusedDate(date)
+        if (viewType !== 'day') {
+            setViewType('day')
+        }
     }
 
     // 일정 클릭 (수정)
     const handleEventClick = (schedule: Schedule) => {
         setEditingSchedule(schedule)
         setSelectedDate(new Date(schedule.startTime))
+        setFocusedDate(new Date(schedule.startTime))
         setConflicts(checkConflicts(schedule.startTime, schedule.endTime, schedule.id))
         setIsModalOpen(true)
     }
@@ -1128,8 +1275,8 @@ const Calendar = () => {
     // 새 일정 추가
     const handleAddSchedule = () => {
         setEditingSchedule(null)
-        setSelectedDate(new Date())
-        setConflicts(checkConflicts(new Date().toISOString()))
+        setSelectedDate(focusedDate)
+        setConflicts(checkConflicts(focusedDate.toISOString()))
         setIsModalOpen(true)
     }
 
@@ -1139,6 +1286,28 @@ const Calendar = () => {
         e.dataTransfer.effectAllowed = 'move'
     }
 
+    const shiftCalendar = (direction: 'prev' | 'next') => {
+        const multiplier = direction === 'prev' ? -1 : 1
+        setCurrentDate(prev => {
+            if (viewType === 'month' || viewType === 'list') {
+                return multiplier < 0 ? subMonths(prev, 1) : addMonths(prev, 1)
+            }
+            if (viewType === 'week') {
+                return addDays(prev, multiplier * 7)
+            }
+            return addDays(prev, multiplier)
+        })
+    }
+
+    const periodLabel = useMemo(() => {
+        if (viewType === 'month') return format(currentDate, 'yyyy년 MM월', { locale: ko })
+        if (viewType === 'week') {
+            return `${format(startOfWeek(currentDate, { weekStartsOn: 0 }), 'M월 d일', { locale: ko })} - ${format(endOfWeek(currentDate, { weekStartsOn: 0 }), 'M월 d일', { locale: ko })}`
+        }
+        if (viewType === 'day') return format(currentDate, 'yyyy년 MM월 dd일 EEEE', { locale: ko })
+        return '검색/필터 기준 일정'
+    }, [currentDate, viewType])
+
     // 키보드 단축키
     useHotkeys('n', () => handleAddSchedule(), { enableOnFormTags: false })
     useHotkeys('t', () => setCurrentDate(new Date()), { enableOnFormTags: false })
@@ -1146,8 +1315,8 @@ const Calendar = () => {
     useHotkeys('w', () => setViewType('week'), { enableOnFormTags: false })
     useHotkeys('d', () => setViewType('day'), { enableOnFormTags: false })
     useHotkeys('l', () => setViewType('list'), { enableOnFormTags: false })
-    useHotkeys('left', () => setCurrentDate(prev => subMonths(prev, 1)), { enableOnFormTags: false })
-    useHotkeys('right', () => setCurrentDate(prev => addMonths(prev, 1)), { enableOnFormTags: false })
+    useHotkeys('left', () => shiftCalendar('prev'), { enableOnFormTags: false })
+    useHotkeys('right', () => shiftCalendar('next'), { enableOnFormTags: false })
 
     return (
         <div className="space-y-6 animate-fade-in">
@@ -1155,16 +1324,11 @@ const Calendar = () => {
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
                     <h1 className="text-2xl font-bold text-hud-text-primary">스마트 캘린더</h1>
-                    <p className="text-hud-text-muted mt-1">
-                        {viewType === 'month' && format(currentDate, 'yyyy년 MM월', { locale: ko })}
-                        {viewType === 'week' && `${format(startOfWeek(currentDate, { weekStartsOn: 0 }), 'M월 d일', { locale: ko })} - ${format(endOfWeek(currentDate, { weekStartsOn: 0 }), 'M월 d일', { locale: ko })}`}
-                        {viewType === 'day' && format(currentDate, 'yyyy년 MM월 dd일 EEEE', { locale: ko })}
-                        {viewType === 'list' && '전체 일정'}
-                    </p>
+                    <p className="text-hud-text-muted mt-1">{periodLabel}</p>
                 </div>
                 <div className="flex items-center gap-3">
                     <ViewTabs currentView={viewType} onViewChange={setViewType} />
-                    <Button variant="ghost" onClick={() => setCurrentDate(new Date())}>
+                    <Button variant="ghost" onClick={() => { setCurrentDate(new Date()); setFocusedDate(new Date()) }}>
                         오늘
                     </Button>
                     <Button variant="primary" glow leftIcon={<Plus size={18} />} onClick={handleAddSchedule}>
@@ -1173,148 +1337,316 @@ const Calendar = () => {
                 </div>
             </div>
 
-            {/* 네비게이션 + 캘린더 */}
-            <HudCard noPadding>
-                {/* 네비게이션 */}
-                <div className="flex items-center justify-between p-4 border-b border-hud-border-secondary">
-                    <div className="flex items-center gap-2">
-                        <button
-                            onClick={() => setCurrentDate(prev => subMonths(prev, 1))}
-                            className="p-2 rounded-lg hover:bg-hud-bg-hover text-hud-text-secondary hover:text-hud-text-primary transition-hud"
-                        >
-                            <ChevronLeft size={20} />
-                        </button>
-                        <button
-                            onClick={() => setCurrentDate(new Date())}
-                            className="px-3 py-1 rounded-lg hover:bg-hud-bg-hover text-hud-text-primary font-medium transition-hud"
-                        >
-                            {format(currentDate, 'yyyy년 MM월', { locale: ko })}
-                        </button>
-                        <button
-                            onClick={() => setCurrentDate(prev => addMonths(prev, 1))}
-                            className="p-2 rounded-lg hover:bg-hud-bg-hover text-hud-text-secondary hover:text-hud-text-primary transition-hud"
-                        >
-                            <ChevronRight size={20} />
-                        </button>
+            <HudCard className="overflow-hidden">
+                <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)] gap-4">
+                    <div className="rounded-2xl border border-hud-border-secondary bg-hud-bg-primary/70 p-4">
+                        <div className="flex items-center gap-3">
+                            <div className="flex-1 relative">
+                                <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-hud-text-muted" />
+                                <input
+                                    value={searchQuery}
+                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                    placeholder="제목, 장소, 설명으로 일정 검색"
+                                    className="w-full pl-9 pr-3 py-2.5 bg-hud-bg-secondary border border-hud-border-secondary rounded-xl text-sm text-hud-text-primary placeholder:text-hud-text-muted focus:outline-none focus:border-hud-accent-primary"
+                                />
+                            </div>
+                            <Button variant="ghost" onClick={() => { setSearchQuery(''); setTypeFilter('all') }}>
+                                초기화
+                            </Button>
+                        </div>
+                        <div className="flex flex-wrap gap-2 mt-3">
+                            {[
+                                { value: 'all', label: '전체' },
+                                { value: 'meeting', label: '회의' },
+                                { value: 'task', label: '업무' },
+                                { value: 'presentation', label: '발표' },
+                                { value: 'event', label: '이벤트' },
+                                { value: 'break', label: '휴식' },
+                            ].map((item) => (
+                                <button
+                                    key={item.value}
+                                    type="button"
+                                    onClick={() => setTypeFilter(item.value)}
+                                    className={`px-3 py-1.5 rounded-full border text-xs transition-hud ${
+                                        typeFilter === item.value
+                                            ? 'border-hud-accent-primary bg-hud-accent-primary/15 text-hud-accent-primary'
+                                            : 'border-hud-border-secondary text-hud-text-secondary hover:bg-hud-bg-hover'
+                                    }`}
+                                >
+                                    {item.label}
+                                </button>
+                            ))}
+                        </div>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
+                            <div className="rounded-xl border border-hud-border-secondary bg-hud-bg-secondary/70 p-3">
+                                <p className="text-xs text-hud-text-muted">현재 필터 결과</p>
+                                <p className="text-xl font-bold text-hud-text-primary mt-1">{filteredSchedules.length}</p>
+                            </div>
+                            <div className="rounded-xl border border-hud-border-secondary bg-hud-bg-secondary/70 p-3">
+                                <p className="text-xs text-hud-text-muted">오늘 일정</p>
+                                <p className="text-xl font-bold text-hud-text-primary mt-1">{filteredSchedules.filter(s => isSameDay(new Date(s.startTime), new Date())).length}</p>
+                            </div>
+                            <div className="rounded-xl border border-hud-border-secondary bg-hud-bg-secondary/70 p-3">
+                                <p className="text-xs text-hud-text-muted">선택 날짜</p>
+                                <p className="text-xl font-bold text-hud-text-primary mt-1">{focusDateSchedules.length}</p>
+                            </div>
+                            <div className="rounded-xl border border-hud-border-secondary bg-hud-bg-secondary/70 p-3">
+                                <p className="text-xs text-hud-text-muted">반복 일정</p>
+                                <p className="text-xl font-bold text-hud-text-primary mt-1">{filteredSchedules.filter(s => s.isRecurring).length}</p>
+                            </div>
+                        </div>
                     </div>
 
-                    {/* 키보드 단축키 안내 */}
-                    <div className="hidden md:flex items-center gap-4 text-xs text-hud-text-muted">
-                        <span>N: 새 일정</span>
-                        <span>T: 오늘</span>
-                        <span>←→: 이전/다음</span>
+                    <div className="rounded-2xl border border-hud-accent-primary/25 bg-gradient-to-br from-hud-accent-primary/12 via-hud-bg-primary/90 to-hud-bg-secondary p-4">
+                        <div className="flex items-center gap-2 text-hud-accent-primary">
+                            <Target size={16} />
+                            <span className="text-sm font-semibold">오늘의 포커스</span>
+                        </div>
+                        <div className="mt-3">
+                            <p className="text-xs text-hud-text-muted">다음 일정</p>
+                            {nextSchedules[0] ? (
+                                <div className="mt-2 rounded-xl border border-hud-border-secondary bg-hud-bg-primary/70 p-3">
+                                    <p className="text-sm font-semibold text-hud-text-primary">{nextSchedules[0].title}</p>
+                                    <p className="text-xs text-hud-text-muted mt-1">
+                                        {format(new Date(nextSchedules[0].startTime), 'M월 d일 HH:mm', { locale: ko })}
+                                        {nextSchedules[0].location && ` · ${nextSchedules[0].location}`}
+                                    </p>
+                                </div>
+                            ) : (
+                                <p className="text-sm text-hud-text-muted mt-2">다가오는 일정이 없습니다.</p>
+                            )}
+                        </div>
+                        <div className="grid grid-cols-2 gap-3 mt-4">
+                            <div className="rounded-xl border border-hud-border-secondary bg-hud-bg-primary/70 p-3">
+                                <p className="text-xs text-hud-text-muted">가장 바쁜 날</p>
+                                <p className="text-sm font-semibold text-hud-text-primary mt-1">
+                                    {busiestDay ? format(busiestDay.date, 'M월 d일', { locale: ko }) : '-'}
+                                </p>
+                                <p className="text-xs text-hud-text-muted mt-1">
+                                    {busiestDay ? `${busiestDay.count}건` : '일정 없음'}
+                                </p>
+                            </div>
+                            <div className="rounded-xl border border-hud-border-secondary bg-hud-bg-primary/70 p-3">
+                                <p className="text-xs text-hud-text-muted">추천 빈 시간</p>
+                                <p className="text-sm font-semibold text-hud-text-primary mt-1">{suggestedSlots[0] || '없음'}</p>
+                                <p className="text-xs text-hud-text-muted mt-1">{format(focusedDate, 'M월 d일 기준', { locale: ko })}</p>
+                            </div>
+                        </div>
                     </div>
                 </div>
-
-                {/* 캘린더 뷰 */}
-                {isLoading ? (
-                    <div className="p-12 text-center text-hud-text-muted">
-                        <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-hud-accent-primary"></div>
-                        <p className="mt-4">일정을 불러오는 중...</p>
-                    </div>
-                ) : (
-                    <AnimatePresence mode="wait">
-                        <motion.div
-                            key={viewType}
-                            initial={{ opacity: 0, y: 10 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            exit={{ opacity: 0, y: -10 }}
-                            transition={{ duration: 0.2 }}
-                        >
-                            {viewType === 'month' && (
-                                <MonthView
-                                    currentDate={currentDate}
-                                    schedules={schedules}
-                                    onDateClick={handleDateClick}
-                                    onEventClick={handleEventClick}
-                                    onDragStart={handleDragStart}
-                                    holidays={holidaysInMonth}
-                                />
-                            )}
-                            {viewType === 'week' && (
-                                <WeekView
-                                    currentDate={currentDate}
-                                    schedules={schedules}
-                                    onDateClick={handleDateClick}
-                                    onEventClick={handleEventClick}
-                                    onDragStart={handleDragStart}
-                                    holidays={holidaysInWeek}
-                                />
-                            )}
-                            {viewType === 'day' && (
-                                <DayView
-                                    currentDate={currentDate}
-                                    schedules={schedules.filter(s => isSameDay(new Date(s.startTime), currentDate))}
-                                    onEventClick={handleEventClick}
-                                    onDragStart={handleDragStart}
-                                    holidays={holidaysInWeek}
-                                />
-                            )}
-                            {viewType === 'list' && (
-                                <ListView
-                                    schedules={schedules}
-                                    onEventClick={handleEventClick}
-                                />
-                            )}
-                        </motion.div>
-                    </AnimatePresence>
-                )}
             </HudCard>
 
-            {/* 빠른 통계 카드들 */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <HudCard className="p-4">
-                    <div className="flex items-center gap-3">
-                        <div className="p-2 rounded-lg bg-blue-500/20 text-blue-400">
-                            <CalendarDays size={20} />
+            <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_360px] gap-6">
+                <HudCard noPadding>
+                    <div className="flex items-center justify-between p-4 border-b border-hud-border-secondary">
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={() => shiftCalendar('prev')}
+                                className="p-2 rounded-lg hover:bg-hud-bg-hover text-hud-text-secondary hover:text-hud-text-primary transition-hud"
+                            >
+                                <ChevronLeft size={20} />
+                            </button>
+                            <button
+                                onClick={() => setCurrentDate(new Date())}
+                                className="px-3 py-1 rounded-lg hover:bg-hud-bg-hover text-hud-text-primary font-medium transition-hud"
+                            >
+                                {periodLabel}
+                            </button>
+                            <button
+                                onClick={() => shiftCalendar('next')}
+                                className="p-2 rounded-lg hover:bg-hud-bg-hover text-hud-text-secondary hover:text-hud-text-primary transition-hud"
+                            >
+                                <ChevronRight size={20} />
+                            </button>
                         </div>
-                        <div>
-                            <p className="text-2xl font-bold text-hud-text-primary">
-                                {schedules.filter(s => isSameMonth(new Date(s.startTime), currentDate)).length}
-                            </p>
-                            <p className="text-xs text-hud-text-muted">이번 달 일정</p>
-                        </div>
-                    </div>
-                </HudCard>
-                <HudCard className="p-4">
-                    <div className="flex items-center gap-3">
-                        <div className="p-2 rounded-lg bg-emerald-500/20 text-emerald-400">
-                            <Clock size={20} />
-                        </div>
-                        <div>
-                            <p className="text-2xl font-bold text-hud-text-primary">
-                                {schedules.filter(s => isSameDay(new Date(s.startTime), new Date())).length}
-                            </p>
-                            <p className="text-xs text-hud-text-muted">오늘의 일정</p>
-                        </div>
-                    </div>
-                </HudCard>
-                <HudCard className="p-4">
-                    <div className="flex items-center gap-3">
-                        <div className="p-2 rounded-lg bg-purple-500/20 text-purple-400">
-                            <Copy size={20} />
-                        </div>
-                        <div>
-                            <p className="text-2xl font-bold text-hud-text-primary">
-                                {schedules.filter(s => s.isRecurring).length}
-                            </p>
-                            <p className="text-xs text-hud-text-muted">반복 일정</p>
+
+                        <div className="hidden md:flex items-center gap-4 text-xs text-hud-text-muted">
+                            <span>날짜 클릭: 일간 보기로 확대</span>
+                            <span>N: 새 일정</span>
+                            <span>←→: 기간 이동</span>
                         </div>
                     </div>
-                </HudCard>
-                <HudCard className="p-4">
-                    <div className="flex items-center gap-3">
-                        <div className="p-2 rounded-lg bg-amber-500/20 text-amber-400">
-                            <Briefcase size={20} />
+
+                    {isLoading ? (
+                        <div className="p-12 text-center text-hud-text-muted">
+                            <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-hud-accent-primary"></div>
+                            <p className="mt-4">일정을 불러오는 중...</p>
                         </div>
-                        <div>
-                            <p className="text-2xl font-bold text-hud-text-primary">
-                                {schedules.filter(s => s.type === 'meeting').length}
-                            </p>
-                            <p className="text-xs text-hud-text-muted">회의 일정</p>
-                        </div>
-                    </div>
+                    ) : (
+                        <AnimatePresence mode="wait">
+                            <motion.div
+                                key={viewType}
+                                initial={{ opacity: 0, y: 10 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                exit={{ opacity: 0, y: -10 }}
+                                transition={{ duration: 0.2 }}
+                            >
+                                {viewType === 'month' && (
+                                    <MonthView
+                                        currentDate={currentDate}
+                                        schedules={filteredSchedules}
+                                        onDateClick={handleDateClick}
+                                        onEventClick={handleEventClick}
+                                        onDragStart={handleDragStart}
+                                        holidays={holidaysInMonth}
+                                    />
+                                )}
+                                {viewType === 'week' && (
+                                    <WeekView
+                                        currentDate={currentDate}
+                                        schedules={filteredSchedules}
+                                        onDateClick={handleDateClick}
+                                        onEventClick={handleEventClick}
+                                        onDragStart={handleDragStart}
+                                        holidays={holidaysInWeek}
+                                    />
+                                )}
+                                {viewType === 'day' && (
+                                    <DayView
+                                        currentDate={currentDate}
+                                        schedules={filteredSchedules.filter(s => isSameDay(new Date(s.startTime), currentDate))}
+                                        onEventClick={handleEventClick}
+                                        onDragStart={handleDragStart}
+                                        holidays={holidaysInWeek}
+                                    />
+                                )}
+                                {viewType === 'list' && (
+                                    <ListView
+                                        schedules={filteredSchedules}
+                                        onEventClick={handleEventClick}
+                                    />
+                                )}
+                            </motion.div>
+                        </AnimatePresence>
+                    )}
                 </HudCard>
+
+                <div className="space-y-4">
+                    <HudCard title="빠른 일정 추가" subtitle="복잡한 모달 없이 바로 입력">
+                        <div className="space-y-3">
+                            <input
+                                value={quickAddForm.title}
+                                onChange={(e) => setQuickAddForm(prev => ({ ...prev, title: e.target.value }))}
+                                placeholder="예: 팀 주간회의, 매물 촬영, 계약 미팅"
+                                className="w-full px-3 py-2.5 bg-hud-bg-primary border border-hud-border-secondary rounded-xl text-sm text-hud-text-primary placeholder:text-hud-text-muted focus:outline-none focus:border-hud-accent-primary"
+                            />
+                            <input
+                                type="datetime-local"
+                                value={quickAddForm.startTime}
+                                onChange={(e) => setQuickAddForm(prev => ({ ...prev, startTime: e.target.value }))}
+                                className="w-full px-3 py-2.5 bg-hud-bg-primary border border-hud-border-secondary rounded-xl text-sm text-hud-text-primary focus:outline-none focus:border-hud-accent-primary"
+                            />
+                            <select
+                                value={quickAddForm.type}
+                                onChange={(e) => setQuickAddForm(prev => ({ ...prev, type: e.target.value }))}
+                                className="w-full px-3 py-2.5 bg-hud-bg-primary border border-hud-border-secondary rounded-xl text-sm text-hud-text-primary focus:outline-none focus:border-hud-accent-primary"
+                            >
+                                <option value="default">자동 추천</option>
+                                <option value="meeting">회의</option>
+                                <option value="task">업무</option>
+                                <option value="presentation">발표</option>
+                                <option value="event">이벤트</option>
+                                <option value="break">휴식</option>
+                            </select>
+                            <div className="flex gap-2">
+                                <Button variant="primary" className="flex-1" leftIcon={<Plus size={16} />} onClick={handleQuickAdd}>
+                                    빠르게 저장
+                                </Button>
+                                <Button
+                                    variant="ghost"
+                                    onClick={() => {
+                                        setSelectedDate(focusedDate)
+                                        setEditingSchedule(null)
+                                        setConflicts(checkConflicts(focusedDate.toISOString()))
+                                        setIsModalOpen(true)
+                                    }}
+                                >
+                                    상세 입력
+                                </Button>
+                            </div>
+                        </div>
+                    </HudCard>
+
+                    <HudCard
+                        title="선택한 날짜 일정"
+                        subtitle={format(focusedDate, 'M월 d일 EEEE', { locale: ko })}
+                        action={
+                            <button
+                                onClick={() => handleDateClick(new Date())}
+                                className="text-xs text-hud-accent-primary hover:underline"
+                            >
+                                오늘로 이동
+                            </button>
+                        }
+                    >
+                        <div className="space-y-2">
+                            {focusDateSchedules.length > 0 ? (
+                                focusDateSchedules.map(schedule => {
+                                    const colors = getEventColor(schedule.type, schedule.priority)
+                                    return (
+                                        <button
+                                            key={schedule.id}
+                                            onClick={() => handleEventClick(schedule)}
+                                            className={`w-full text-left rounded-xl border ${colors.border} ${colors.bg} px-3 py-3 transition-hud hover:opacity-90`}
+                                        >
+                                            <div className="flex items-center justify-between gap-3">
+                                                <div className="min-w-0">
+                                                    <p className={`font-medium truncate ${colors.text}`}>{schedule.title}</p>
+                                                    <p className="text-xs text-hud-text-muted mt-1">
+                                                        {schedule.isAllDay ? '하루 종일' : formatTime(schedule.startTime)}
+                                                        {schedule.endTime && !schedule.isAllDay && ` ~ ${formatTime(schedule.endTime)}`}
+                                                    </p>
+                                                </div>
+                                                <ArrowRight size={14} className="text-hud-text-muted flex-shrink-0" />
+                                            </div>
+                                        </button>
+                                    )
+                                })
+                            ) : (
+                                <div className="rounded-xl border border-dashed border-hud-border-secondary p-4 text-sm text-hud-text-muted">
+                                    선택한 날짜에 일정이 없습니다.
+                                </div>
+                            )}
+                        </div>
+                    </HudCard>
+
+                    <HudCard title="추천 빈 시간" subtitle="현재 선택 날짜 기준">
+                        <div className="space-y-2">
+                            {suggestedSlots.length > 0 ? (
+                                suggestedSlots.map(slot => (
+                                    <div key={slot} className="rounded-xl border border-hud-border-secondary bg-hud-bg-primary px-3 py-2 text-sm text-hud-text-primary">
+                                        {slot}
+                                    </div>
+                                ))
+                            ) : (
+                                <p className="text-sm text-hud-text-muted">빈 시간이 거의 없습니다. 시간을 나눠서 보세요.</p>
+                            )}
+                        </div>
+                    </HudCard>
+
+                    <HudCard title="곧 다가오는 일정" subtitle="다음 5개 일정">
+                        <div className="space-y-2">
+                            {nextSchedules.length > 0 ? (
+                                nextSchedules.map(schedule => (
+                                    <button
+                                        key={schedule.id}
+                                        onClick={() => handleEventClick(schedule)}
+                                        className="w-full text-left rounded-xl border border-hud-border-secondary bg-hud-bg-primary px-3 py-3 hover:bg-hud-bg-hover transition-hud"
+                                    >
+                                        <p className="text-sm font-medium text-hud-text-primary">{schedule.title}</p>
+                                        <p className="text-xs text-hud-text-muted mt-1">
+                                            {format(new Date(schedule.startTime), 'M월 d일 HH:mm', { locale: ko })}
+                                            {schedule.location && ` · ${schedule.location}`}
+                                        </p>
+                                        <p className="text-xs text-hud-text-muted mt-1">{getTypeLabel(schedule.type)}</p>
+                                    </button>
+                                ))
+                            ) : (
+                                <p className="text-sm text-hud-text-muted">예정된 일정이 없습니다.</p>
+                            )}
+                        </div>
+                    </HudCard>
+                </div>
             </div>
 
             {/* Schedule Modal */}
