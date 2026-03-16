@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   BarChart3,
@@ -18,6 +18,7 @@ import HudCard from '../../components/common/HudCard';
 import Button from '../../components/common/Button';
 import MapPointPicker from '../../components/real-estate/MapPointPicker';
 import { API_BASE } from '../../lib/api';
+import { loadNaverMapsSdk } from '../../lib/map/loadNaverMapsSdk';
 import { useAuthStore } from '../../stores/authStore';
 
 interface DistributionItem {
@@ -63,6 +64,39 @@ interface SegmentDistanceStatItem extends DistanceStatItem {
   tradeTypeName: string;
 }
 
+interface ApartmentComplexStatItem {
+  complexName: string;
+  tradeTypeName: string;
+  count: number;
+  ratio: number;
+  avgPrice: number;
+  medianPrice: number;
+  minPrice: number;
+  maxPrice: number;
+  avgPricePerArea: number;
+  avgRentPrc: number;
+  recentMonth: string | null;
+  recentYmd: string | null;
+  address: string | null;
+}
+
+interface ApartmentComplexPreviewItem {
+  complexName: string;
+  address: string | null;
+  totalCount: number;
+  avgPrice: number;
+  latestYmd: string | null;
+  tradeTypes: string[];
+}
+
+interface ApartmentComplexMarkerItem {
+  complexName: string;
+  address: string | null;
+  latitude: number;
+  longitude: number;
+  totalCount: number;
+}
+
 interface RecentTransactionItem {
   articleNo: string;
   articleName: string;
@@ -73,25 +107,8 @@ interface RecentTransactionItem {
   rentPrc: number | null;
   area: number | null;
   distanceM: number | null;
-  articleConfirmYmd: string | null;
-  address: string;
-}
-
-interface MapSampleItem {
-  id: string;
-  articleNo: string;
-  articleName: string;
-  buildingName: string | null;
-  tradeTypeCode: string;
-  tradeTypeName: string;
-  realEstateTypeCode: string;
-  realEstateTypeName: string;
-  price: number | null;
-  rentPrc: number | null;
-  area: number | null;
-  latitude: number;
-  longitude: number;
-  distanceM: number;
+  latitude: number | null;
+  longitude: number | null;
   articleConfirmYmd: string | null;
   address: string;
 }
@@ -104,7 +121,7 @@ interface AddressMarketResult {
     address: string | null;
   };
   filters: {
-    radiusMeters: number;
+    regionName?: string | null;
     realEstateType: string | null;
     tradeType: string | null;
   };
@@ -129,10 +146,10 @@ interface AddressMarketResult {
   segmentStats?: SegmentStatItem[];
   segmentMonthlyTrend?: SegmentMonthlyTrendItem[];
   segmentDistanceStats?: SegmentDistanceStatItem[];
+  apartmentComplexStats?: ApartmentComplexStatItem[];
   distanceStats: DistanceStatItem[];
   monthlyTrend: MonthlyTrendItem[];
   recentTransactions: RecentTransactionItem[];
-  mapSamples?: MapSampleItem[];
   sourceMeta?: {
     sourceType?: string;
     statblId?: string;
@@ -140,6 +157,8 @@ interface AddressMarketResult {
     analyzedRows?: number;
     region?: string | null;
     nearbyRegionCount?: number;
+    nearbyRegions?: string[];
+    selectedRegion?: string | null;
     infrastructureMessage?: string | null;
   };
 }
@@ -160,12 +179,27 @@ interface OfficeCenterResponse {
   };
 }
 
-const RADIUS_OPTIONS = [
-  { label: '500m', value: 500 },
-  { label: '1km', value: 1000 },
-  { label: '2km', value: 2000 },
-  { label: '3km', value: 3000 },
-];
+interface BoundaryPoint {
+  latitude: number;
+  longitude: number;
+}
+
+interface AddressMarketBoundaryResponse {
+  regionName: string;
+  regionCode: string;
+  center: BoundaryPoint;
+  boundaryType?: string;
+  paths?: number[][][];
+  geojson?: {
+    type?: string;
+    features?: Array<{
+      geometry?: {
+        type?: string;
+        coordinates?: unknown;
+      };
+    }>;
+  };
+}
 
 const PROPERTY_TYPE_OPTIONS = [
   { label: '전체', value: '' },
@@ -192,6 +226,11 @@ const DISTRIBUTION_COLORS = [
   'var(--hud-accent-danger)',
   'var(--hud-text-secondary)',
 ];
+
+const DEFAULT_MAP_CENTER: MapPoint = {
+  latitude: 37.5665,
+  longitude: 126.978,
+};
 
 interface DonutSegment extends DistributionItem {
   color: string;
@@ -252,40 +291,44 @@ function marketSourceMetaText(sourceType?: string) {
 
 const AddressMarketStats = () => {
   const authFetch = useAuthStore((state) => state.authFetch);
+  const authChecked = useAuthStore((state) => state.authChecked);
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
 
   const [isInitLoading, setIsInitLoading] = useState(true);
   const [officeInfo, setOfficeInfo] = useState<{ companyName?: string | null; address?: string | null } | null>(null);
   const [officeCenter, setOfficeCenter] = useState<MapPoint | null>(null);
 
-  const [mapCenter, setMapCenter] = useState<MapPoint | null>(null);
+  const [mapCenter, setMapCenter] = useState<MapPoint | null>(DEFAULT_MAP_CENTER);
   const [selectedPoint, setSelectedPoint] = useState<MapPoint | null>(null);
   const [pointOrigin, setPointOrigin] = useState<'office' | 'manual'>('office');
 
-  const [radiusMeters, setRadiusMeters] = useState(1000);
+  const [selectedRegion, setSelectedRegion] = useState('');
+  const [nearbyRegions, setNearbyRegions] = useState<string[]>([]);
   const [realEstateType, setRealEstateType] = useState('');
   const [tradeType, setTradeType] = useState('');
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AddressMarketResult | null>(null);
-  const [selectedMapSample, setSelectedMapSample] = useState<MapSampleItem | null>(null);
   const [selectedSegmentKey, setSelectedSegmentKey] = useState<string | null>(null);
+  const [boundaryPaths, setBoundaryPaths] = useState<BoundaryPoint[][]>([]);
+  const [boundaryLabel, setBoundaryLabel] = useState<string | null>(null);
+  const skipRegionAutoAnalyzeRef = useRef(false);
 
   const analyzeAroundPoint = async (point: MapPoint, monthsBack = '2') => {
     setIsLoading(true);
     setError(null);
     setResult(null);
-    setSelectedMapSample(null);
 
     try {
       const params = new URLSearchParams({
         lat: String(point.latitude),
         lng: String(point.longitude),
-        radiusMeters: String(radiusMeters),
         source: 'molit',
         monthsBack,
       });
 
+      if (selectedRegion) params.set('regionName', selectedRegion);
       if (realEstateType) params.set('realEstateType', realEstateType);
       if (tradeType) params.set('tradeType', tradeType);
 
@@ -298,6 +341,13 @@ const AddressMarketStats = () => {
       }
 
       const parsed = data as AddressMarketResult;
+      const regionOptions = parsed.sourceMeta?.nearbyRegions || [];
+      const resolvedRegion = parsed.filters.regionName || parsed.sourceMeta?.selectedRegion || parsed.sourceMeta?.region || '';
+      setNearbyRegions(regionOptions);
+      if (resolvedRegion && resolvedRegion !== selectedRegion) {
+        skipRegionAutoAnalyzeRef.current = true;
+        setSelectedRegion(resolvedRegion);
+      }
       setResult(parsed);
       setMapCenter(point);
       setSelectedPoint(point);
@@ -312,6 +362,14 @@ const AddressMarketStats = () => {
   };
 
   useEffect(() => {
+    if (!authChecked) return;
+
+    if (!isAuthenticated) {
+      setIsInitLoading(false);
+      setError('로그인이 필요합니다.');
+      return;
+    }
+
     let mounted = true;
 
     const loadInitialOfficeCenter = async () => {
@@ -329,12 +387,14 @@ const AddressMarketStats = () => {
           } else {
             setError(data.error || '사무실 위치를 불러오지 못했습니다. 프로필의 사무실 주소를 확인해 주세요.');
           }
+          setPointOrigin('manual');
           return;
         }
 
         const officeData = data as OfficeCenterResponse;
         if (!officeData?.center?.latitude || !officeData?.center?.longitude) {
           setError('사무실 위치를 불러오지 못했습니다. 프로필의 사무실 주소를 확인해 주세요.');
+          setPointOrigin('manual');
           return;
         }
 
@@ -348,6 +408,7 @@ const AddressMarketStats = () => {
         console.error('Office center load failed:', initError);
         if (mounted) {
           setError('사무실 위치를 불러오지 못했습니다. 프로필의 사무실 주소를 확인해 주세요.');
+          setPointOrigin('manual');
         }
       } finally {
         if (mounted) setIsInitLoading(false);
@@ -358,12 +419,22 @@ const AddressMarketStats = () => {
     return () => {
       mounted = false;
     };
-  }, [authFetch]);
+  }, [authChecked, authFetch, isAuthenticated]);
 
   useEffect(() => {
+    if (!authChecked || !isAuthenticated || !selectedPoint || isInitLoading) return;
+    void analyzeAroundPoint(selectedPoint);
+  }, [authChecked, isAuthenticated, realEstateType, tradeType]);
+
+  useEffect(() => {
+    if (!authChecked || !isAuthenticated) return;
+    if (skipRegionAutoAnalyzeRef.current) {
+      skipRegionAutoAnalyzeRef.current = false;
+      return;
+    }
     if (!selectedPoint || isInitLoading) return;
     void analyzeAroundPoint(selectedPoint);
-  }, [radiusMeters, realEstateType, tradeType]);
+  }, [authChecked, isAuthenticated, selectedPoint, isInitLoading, selectedRegion]);
 
   const tradeDonut = useMemo(
     () => buildDonutSegments(result?.tradeDistribution || []),
@@ -375,19 +446,10 @@ const AddressMarketStats = () => {
     [result]
   );
 
-  const mapMarkerPoints = useMemo(() => {
-    if (!result?.mapSamples || result.mapSamples.length === 0) return [];
-    return result.mapSamples.map((item) => ({
-      id: item.id,
-      latitude: item.latitude,
-      longitude: item.longitude,
-      label: item.articleName || '주변 매물',
-    }));
-  }, [result]);
-
   const segmentStats = result?.segmentStats || [];
   const segmentMonthlyTrend = result?.segmentMonthlyTrend || [];
   const segmentDistanceStats = result?.segmentDistanceStats || [];
+  const apartmentComplexStats = result?.apartmentComplexStats || [];
 
   const selectedSegment = useMemo(() => {
     if (segmentStats.length === 0) return null;
@@ -509,6 +571,97 @@ const AddressMarketStats = () => {
     return filtered.length > 0 ? filtered : (result?.recentTransactions || []);
   }, [selectedSegment, result]);
 
+  const activeApartmentComplexStats = useMemo(() => {
+    if (apartmentComplexStats.length === 0) return [];
+    if (!selectedSegment || selectedSegment.realEstateTypeName !== '아파트') return apartmentComplexStats;
+
+    const filtered = apartmentComplexStats.filter((item) => item.tradeTypeName === selectedSegment.tradeTypeName);
+    return filtered.length > 0 ? filtered : apartmentComplexStats;
+  }, [apartmentComplexStats, selectedSegment]);
+
+  const apartmentComplexPreview = useMemo<ApartmentComplexPreviewItem[]>(() => {
+    if (apartmentComplexStats.length === 0) return [];
+
+    const grouped = new Map<string, ApartmentComplexPreviewItem & { weightedPriceSum: number }>();
+
+    apartmentComplexStats.forEach((item) => {
+      const key = `${item.complexName}__${item.address || ''}`;
+      const existing = grouped.get(key);
+
+      if (!existing) {
+        grouped.set(key, {
+          complexName: item.complexName,
+          address: item.address,
+          totalCount: item.count,
+          avgPrice: item.avgPrice,
+          latestYmd: item.recentYmd,
+          tradeTypes: [item.tradeTypeName],
+          weightedPriceSum: item.avgPrice * item.count,
+        });
+        return;
+      }
+
+      existing.totalCount += item.count;
+      existing.weightedPriceSum += item.avgPrice * item.count;
+      existing.avgPrice = existing.totalCount > 0 ? Math.round(existing.weightedPriceSum / existing.totalCount) : existing.avgPrice;
+      const latestYmdCandidates = [existing.latestYmd, item.recentYmd].filter(Boolean).sort();
+      existing.latestYmd = latestYmdCandidates.length > 0 ? latestYmdCandidates[latestYmdCandidates.length - 1] || null : null;
+      if (!existing.tradeTypes.includes(item.tradeTypeName)) {
+        existing.tradeTypes.push(item.tradeTypeName);
+      }
+    });
+
+    return Array.from(grouped.values())
+      .map(({ weightedPriceSum: _weightedPriceSum, ...item }) => item)
+      .sort((a, b) => b.totalCount - a.totalCount || b.avgPrice - a.avgPrice);
+  }, [apartmentComplexStats]);
+
+  const apartmentComplexMarkers = useMemo<ApartmentComplexMarkerItem[]>(() => {
+    const grouped = new Map<string, ApartmentComplexMarkerItem>();
+    (result?.recentTransactions || [])
+      .filter((item) => item.realEstateTypeName === '아파트')
+      .forEach((item) => {
+        const complexName = (item.buildingName || item.articleName || '').trim();
+        if (!complexName || typeof item.latitude !== 'number' || typeof item.longitude !== 'number') return;
+
+        const key = `${complexName}__${item.address || ''}`;
+        if (grouped.has(key)) return;
+
+        const preview = apartmentComplexPreview.find((candidate) => candidate.complexName === complexName);
+        grouped.set(key, {
+          complexName,
+          address: item.address || preview?.address || null,
+          latitude: item.latitude,
+          longitude: item.longitude,
+          totalCount: preview?.totalCount || 1,
+        });
+      });
+
+    return Array.from(grouped.values()).sort((a, b) => b.totalCount - a.totalCount);
+  }, [apartmentComplexPreview, result]);
+
+  const apartmentComplexHighlights = useMemo(() => {
+    if (activeApartmentComplexStats.length === 0) return null;
+
+    const byVolume = [...activeApartmentComplexStats].sort((a, b) => b.count - a.count || b.avgPrice - a.avgPrice);
+    const byPrice = [...activeApartmentComplexStats].sort((a, b) => b.avgPrice - a.avgPrice || b.count - a.count);
+
+    return [
+      {
+        label: '최다 표본 단지',
+        item: byVolume[0] || null,
+        value: byVolume[0] ? `${byVolume[0].count.toLocaleString()}건` : '-',
+        hint: byVolume[0] ? `${byVolume[0].tradeTypeName} · 비중 ${byVolume[0].ratio}%` : '단지 데이터 없음',
+      },
+      {
+        label: '최고 평균가 단지',
+        item: byPrice[0] || null,
+        value: byPrice[0] ? formatPriceMan(byPrice[0].avgPrice) : '-',
+        hint: byPrice[0] ? `${byPrice[0].complexName} · ${byPrice[0].tradeTypeName}` : '단지 데이터 없음',
+      },
+    ];
+  }, [activeApartmentComplexStats]);
+
   const monthlyChart = useMemo(() => {
     if (activeMonthlyTrend.length === 0) return null;
 
@@ -568,11 +721,119 @@ const AddressMarketStats = () => {
     await analyzeAroundPoint(selectedPoint);
   };
 
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!authChecked || !isAuthenticated) {
+      setBoundaryPaths([]);
+      setBoundaryLabel(null);
+      return;
+    }
+
+    const extractBoundaryCoordinateSets = (geojson: AddressMarketBoundaryResponse['geojson']) => {
+      const features = geojson?.features || [];
+      const coordinateSets: number[][][] = [];
+
+      for (const feature of features) {
+        const geometry = feature.geometry;
+        if (!geometry?.coordinates) continue;
+
+        if (geometry.type === 'Polygon') {
+          const polygon = geometry.coordinates as number[][][];
+          if (Array.isArray(polygon?.[0])) coordinateSets.push(polygon[0]);
+        }
+
+        if (geometry.type === 'MultiPolygon') {
+          const multiPolygon = geometry.coordinates as number[][][][];
+          for (const polygon of multiPolygon) {
+            if (Array.isArray(polygon?.[0])) coordinateSets.push(polygon[0]);
+          }
+        }
+      }
+
+      return coordinateSets;
+    };
+
+    const loadBoundary = async () => {
+      if (!selectedPoint || !selectedRegion) {
+        setBoundaryPaths([]);
+        setBoundaryLabel(null);
+        return;
+      }
+
+      try {
+        const response = await authFetch(
+          `${API_BASE}/api/statistics/address-market/boundary?lat=${selectedPoint.latitude}&lng=${selectedPoint.longitude}&regionName=${encodeURIComponent(selectedRegion)}`
+        );
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error || '동 경계 조회 실패');
+        }
+
+        const boundaryData = data as AddressMarketBoundaryResponse;
+        const coordinateSets = Array.isArray(boundaryData.paths) && boundaryData.paths.length > 0
+          ? boundaryData.paths
+          : extractBoundaryCoordinateSets(boundaryData.geojson);
+        if (coordinateSets.length === 0) {
+          if (!cancelled) {
+            setBoundaryPaths([]);
+            setBoundaryLabel(boundaryData.regionName || selectedRegion);
+          }
+          return;
+        }
+
+        await loadNaverMapsSdk();
+        const naver = window.naver;
+
+        const convertPoint = async (x: number, y: number) => {
+          const utmkPoint = new naver.maps.Point(x, y);
+          const latLng = naver.maps.TransCoord.fromUTMKToLatLng(utmkPoint);
+          return {
+            latitude: Number(latLng.lat()),
+            longitude: Number(latLng.lng()),
+          };
+        };
+
+        const convertedPaths = await Promise.all(
+          coordinateSets.map(async (path) => {
+            const converted = await Promise.all(
+              path.map(([x, y]) => convertPoint(x, y))
+            );
+            return converted.filter(
+              (point) => Number.isFinite(point.latitude) && Number.isFinite(point.longitude)
+            );
+          })
+        );
+
+        if (!cancelled) {
+          setBoundaryPaths(convertedPaths.filter((path) => path.length >= 3));
+          setBoundaryLabel(boundaryData.regionName || selectedRegion);
+        }
+      } catch (boundaryError) {
+        console.warn('Boundary overlay load failed:', boundaryError);
+        if (!cancelled) {
+          setBoundaryPaths([]);
+          setBoundaryLabel(null);
+        }
+      }
+    };
+
+    void loadBoundary();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authChecked, isAuthenticated, authFetch, selectedPoint, selectedRegion]);
+
   return (
     <div className="p-4 sm:p-6 space-y-5">
       <div>
-        <h1 className="text-2xl font-bold text-hud-text-primary">통계분석</h1>
-        <p className="text-sm text-hud-text-muted mt-1">국토부 실거래가 데이터를 기준으로 지도 반경 통계를 분석합니다.</p>
+        <h1 className="text-2xl font-bold text-hud-text-primary">지역 거래 통계 분석</h1>
+        <p className="text-sm text-hud-text-muted mt-1">
+          국토부 실거래가 데이터를 기준으로 중심점 주변 동 단위 통계를 분석합니다.
+          지도에서 클릭하여 중심점을 변경하고, 동을 선택하여 실시간으로 통계를 확인하세요.
+        </p>
       </div>
 
       <HudCard>
@@ -615,113 +876,110 @@ const AddressMarketStats = () => {
           )}
         </div>
 
-        {mapCenter ? (
-          <MapPointPicker
-            center={mapCenter}
-            selectedPoint={selectedPoint}
-            points={mapMarkerPoints}
-            activePointId={selectedMapSample?.id || null}
-            onPointClick={(point) => {
-              const matched = result?.mapSamples?.find((item) => item.id === point.id) || null;
-              setSelectedMapSample(matched);
-            }}
-            radiusMeters={radiusMeters}
-            onSelect={(point) => {
-              setSelectedPoint(point);
-              setPointOrigin('manual');
-              setSelectedMapSample(null);
-            }}
-          />
-        ) : (
-          <div className="h-[380px] rounded-xl border border-hud-border-secondary bg-hud-bg-primary flex items-center justify-center text-sm text-hud-text-muted">
-            사무실 위치를 불러오지 못했습니다. 프로필의 사무실 주소를 확인해 주세요.
-          </div>
-        )}
+        <MapPointPicker
+          center={mapCenter || DEFAULT_MAP_CENTER}
+          selectedPoint={selectedPoint}
+          boundaryPaths={boundaryPaths}
+          boundaryLabel={boundaryLabel}
+          apartmentComplexMarkers={apartmentComplexMarkers}
+          onSelect={(point) => {
+            setSelectedPoint(point);
+            setPointOrigin('manual');
+          }}
+        />
 
-        {result && (
-          <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-hud-text-muted">
-            <span>지도 표본 마커: {(result.mapSamples || []).length.toLocaleString()}건</span>
-            <span>마커 출처: 내 DB 좌표 표본</span>
-            <span>마커 클릭 시 상세 정보가 표시됩니다.</span>
-          </div>
-        )}
-
-        {selectedMapSample && (
-          <div className="mt-3 rounded-lg border border-hud-border-secondary bg-transparent p-3">
-            <div className="flex flex-wrap items-start justify-between gap-2">
-              <div>
-                <p className="text-sm font-semibold text-hud-text-primary">{selectedMapSample.articleName}</p>
-                <p className="text-xs text-hud-text-muted mt-0.5">
-                  {selectedMapSample.realEstateTypeName} / {selectedMapSample.tradeTypeName}
-                </p>
-                <p className="text-xs text-hud-text-muted mt-1">{selectedMapSample.address}</p>
-              </div>
-              <div className="text-right">
-                <p className="text-sm font-semibold text-hud-accent-primary">
-                  {formatPriceMan(selectedMapSample.price)}
-                  {selectedMapSample.rentPrc ? ` / ${selectedMapSample.rentPrc.toLocaleString()}만` : ''}
-                </p>
-                <p className="text-xs text-hud-text-muted mt-0.5">
-                  {selectedMapSample.area ? `${selectedMapSample.area.toFixed(2)}㎡` : '-'} · {selectedMapSample.distanceM.toLocaleString()}m
-                </p>
-                <p className="text-xs text-hud-text-muted">{formatYmd(selectedMapSample.articleConfirmYmd)}</p>
-              </div>
-            </div>
-          </div>
-        )}
       </HudCard>
 
       <HudCard>
-        <div className="grid grid-cols-1 lg:grid-cols-[180px_180px_180px_auto] gap-3 items-end">
-          <select
-            value={radiusMeters}
-            onChange={(e) => setRadiusMeters(parseInt(e.target.value, 10))}
-            className="w-full px-3 py-2.5 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-sm text-hud-text-primary focus:outline-none focus:border-hud-accent-primary"
-          >
-            {RADIUS_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
-            ))}
-          </select>
-
-          <select
-            value={realEstateType}
-            onChange={(e) => setRealEstateType(e.target.value)}
-            className="w-full px-3 py-2.5 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-sm text-hud-text-primary focus:outline-none focus:border-hud-accent-primary"
-          >
-            {PROPERTY_TYPE_OPTIONS.map((opt) => (
-              <option key={opt.value || 'all'} value={opt.value}>{opt.label}</option>
-            ))}
-          </select>
-
-          <select
-            value={tradeType}
-            onChange={(e) => setTradeType(e.target.value)}
-            className="w-full px-3 py-2.5 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-sm text-hud-text-primary focus:outline-none focus:border-hud-accent-primary"
-          >
-            {TRADE_TYPE_OPTIONS.map((opt) => (
-              <option key={opt.value || 'all'} value={opt.value}>{opt.label}</option>
-            ))}
-          </select>
-
-          <div className="flex justify-end">
-            <Button onClick={handleAnalyze} disabled={isLoading || isInitLoading || !selectedPoint} leftIcon={isLoading ? <Loader2 size={14} className="animate-spin" /> : <BarChart3 size={14} />}>
-              {isLoading ? '분석 중...' : '주변 통계 분석'}
-            </Button>
+        <div className="space-y-4">
+          <div className="flex items-center gap-2 text-sm text-hud-text-secondary">
+            <MousePointerClick size={15} />
+            <span>필터를 적용하여 실시간으로 통계를 분석하세요</span>
           </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-[240px_200px_200px_auto] gap-3 items-end">
+            <div className="space-y-1">
+              <label className="text-xs text-hud-text-muted">분석 동 선택</label>
+              <select
+                value={selectedRegion}
+                onChange={(e) => setSelectedRegion(e.target.value)}
+                className="w-full px-3 py-2.5 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-sm text-hud-text-primary focus:outline-none focus:border-hud-accent-primary hover:border-hud-accent-info/50 transition-colors"
+              >
+                <option value="">
+                  {nearbyRegions.length > 0 ? '전체 동' : '주변 동 불러오는 중'}
+                </option>
+                {nearbyRegions.map((region) => (
+                  <option key={region} value={region}>{region}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-xs text-hud-text-muted">매물 유형</label>
+              <select
+                value={realEstateType}
+                onChange={(e) => setRealEstateType(e.target.value)}
+                className="w-full px-3 py-2.5 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-sm text-hud-text-primary focus:outline-none focus:border-hud-accent-primary hover:border-hud-accent-info/50 transition-colors"
+              >
+                {PROPERTY_TYPE_OPTIONS.map((opt) => (
+                  <option key={opt.value || 'all'} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-xs text-hud-text-muted">거래 유형</label>
+              <select
+                value={tradeType}
+                onChange={(e) => setTradeType(e.target.value)}
+                className="w-full px-3 py-2.5 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-sm text-hud-text-primary focus:outline-none focus:border-hud-accent-primary hover:border-hud-accent-info/50 transition-colors"
+              >
+                {TRADE_TYPE_OPTIONS.map((opt) => (
+                  <option key={opt.value || 'all'} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex items-end gap-2">
+              <Button
+                onClick={handleAnalyze}
+                disabled={isLoading || isInitLoading || !selectedPoint}
+                leftIcon={isLoading ? <Loader2 size={14} className="animate-spin" /> : <BarChart3 size={14} />}
+                className="flex-1"
+              >
+                {isLoading ? '분석 중...' : '주변 통계 분석'}
+              </Button>
+            </div>
+          </div>
+
+          {selectedRegion && (
+            <div className="flex items-center gap-2 px-3 py-2 bg-hud-accent-info/10 border border-hud-accent-info/30 rounded-lg">
+              <MapPin size={14} className="text-hud-accent-info" />
+              <span className="text-sm text-hud-accent-info">
+                현재 선택된 동: <strong>{selectedRegion}</strong>
+              </span>
+            </div>
+          )}
         </div>
       </HudCard>
 
       {isInitLoading && (
-        <div className="rounded-lg border border-hud-border-secondary bg-hud-bg-secondary px-4 py-3 text-sm text-hud-text-muted flex items-center gap-2">
-          <Loader2 className="w-4 h-4 animate-spin" />
-          사무실 위치를 불러오는 중...
+        <div className="rounded-lg border border-hud-border-secondary bg-hud-bg-secondary px-6 py-4 text-sm text-hud-text-muted flex items-center justify-center gap-3">
+          <Loader2 className="w-5 h-5 animate-spin text-hud-accent-primary" />
+          <div>
+            <p className="font-medium text-hud-text-primary">사무실 위치를 불러오는 중...</p>
+            <p className="text-xs text-hud-text-muted mt-1">프로필의 사무실 주소를 기준으로 분석합니다.</p>
+          </div>
         </div>
       )}
 
       {error && (
-        <div className="rounded-lg border border-hud-accent-danger/40 bg-hud-accent-danger/10 px-4 py-3 text-hud-accent-danger text-sm flex items-start gap-2">
-          <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-          <span>{error}</span>
+        <div className="rounded-lg border border-hud-accent-danger/40 bg-hud-accent-danger/10 px-6 py-4 text-hud-accent-danger text-sm flex items-start gap-3">
+          <AlertCircle className="w-5 h-5 mt-0.5 flex-shrink-0" />
+          <div className="flex-1">
+            <p className="font-medium">오류 발생</p>
+            <p className="text-xs mt-1 opacity-90">{error}</p>
+          </div>
         </div>
       )}
 
@@ -750,13 +1008,172 @@ const AddressMarketStats = () => {
           )}
 
           <HudCard
-            title="세그먼트 KPI"
-            subtitle={selectedSegment
-              ? `${selectedSegment.realEstateTypeName} · ${selectedSegment.tradeTypeName} 조합 기준 핵심 지표`
-              : '세그먼트 데이터가 없으면 전체 요약만 표시됩니다.'}
+            title="선택 동 아파트 단지"
+            subtitle={selectedRegion
+              ? `${selectedRegion} 기준으로 확인된 아파트 단지입니다.`
+              : '선택된 동 기준으로 확인된 아파트 단지입니다.'}
           >
-            {segmentStats.length > 0 ? (
+            {apartmentComplexPreview.length === 0 ? (
+              <p className="text-sm text-hud-text-muted">현재 선택된 동에서 확인된 아파트 단지가 없습니다.</p>
+            ) : (
               <div className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                  {apartmentComplexPreview.map((item) => (
+                    <div
+                      key={`${item.complexName}-${item.address || 'unknown'}`}
+                      className="rounded-xl border border-hud-border-secondary bg-hud-bg-primary/70 p-4 hover:border-hud-accent-info/40 transition-colors cursor-pointer"
+                      onClick={() => {
+                        // 단지 클릭 시 해당 단지 상세 정보 펼침 처리
+                      }}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-semibold text-hud-text-primary" title={item.complexName}>
+                            {item.complexName}
+                          </p>
+                          {item.address && (
+                            <p className="mt-1 truncate text-xs text-hud-text-muted" title={item.address}>
+                              {item.address}
+                            </p>
+                          )}
+                        </div>
+                        <div className="rounded-md border border-hud-accent-info/30 bg-hud-accent-info/10 px-2 py-1 text-xs text-hud-accent-info flex-shrink-0">
+                          {item.totalCount.toLocaleString()}건
+                        </div>
+                      </div>
+
+                      <div className="mt-4 grid grid-cols-2 gap-2">
+                        <div className="rounded-lg border border-hud-border-secondary/70 bg-hud-bg-secondary/60 p-3">
+                          <p className="text-[11px] text-hud-text-muted">평균가</p>
+                          <p className="mt-1 text-sm font-semibold text-hud-accent-primary">{formatPriceMan(item.avgPrice)}</p>
+                        </div>
+                        <div className="rounded-lg border border-hud-border-secondary/70 bg-hud-bg-secondary/60 p-3">
+                          <p className="text-[11px] text-hud-text-muted">최근 확인</p>
+                          <p className="mt-1 text-sm font-semibold text-hud-text-primary">{formatYmd(item.latestYmd)}</p>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {item.tradeTypes.map((trade) => (
+                          <span
+                            key={`${item.complexName}-${trade}`}
+                            className="rounded-full border border-hud-border-secondary bg-hud-bg-secondary px-2.5 py-1 text-[11px] text-hud-text-secondary"
+                          >
+                            {trade}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* 단지별 상세 거래 정보 테이블 추가 */}
+                {activeApartmentComplexStats.length > 0 && (
+                  <div className="border-t border-hud-border-secondary pt-4">
+                    <h3 className="text-sm font-semibold text-hud-text-primary mb-3">단지별 상세 거래 정보</h3>
+                    <div className="overflow-auto">
+                      <table className="w-full min-w-[980px]">
+                        <thead>
+                          <tr className="border-b border-hud-border-secondary">
+                            <th className="text-left py-2 px-1 text-xs text-hud-text-muted">단지명</th>
+                            <th className="text-left py-2 px-1 text-xs text-hud-text-muted">거래유형</th>
+                            <th className="text-right py-2 px-1 text-xs text-hud-text-muted">표본 수</th>
+                            <th className="text-right py-2 px-1 text-xs text-hud-text-muted">비중</th>
+                            <th className="text-right py-2 px-1 text-xs text-hud-text-muted">평균가</th>
+                            <th className="text-right py-2 px-1 text-xs text-hud-text-muted">중위가</th>
+                            <th className="text-right py-2 px-1 text-xs text-hud-text-muted">가격범위</th>
+                            <th className="text-right py-2 px-1 text-xs text-hud-text-muted">평단가</th>
+                            <th className="text-left py-2 px-1 text-xs text-hud-text-muted">최근 거래</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {activeApartmentComplexStats.map((item) => (
+                            <tr key={`${item.complexName}-${item.tradeTypeName}`} className="border-b border-hud-border-secondary/40 hover:bg-hud-bg-primary/50 transition-colors">
+                              <td className="py-2 px-1 text-sm text-hud-text-primary">
+                                <div className="max-w-[280px] truncate font-medium" title={item.complexName}>{item.complexName}</div>
+                                {item.address && (
+                                  <div className="max-w-[280px] truncate text-xs text-hud-text-muted" title={item.address}>
+                                    {item.address}
+                                  </div>
+                                )}
+                              </td>
+                              <td className="py-2 px-1 text-sm text-hud-text-primary">{item.tradeTypeName}</td>
+                              <td className="py-2 px-1 text-sm text-hud-text-primary text-right">{item.count.toLocaleString()}건</td>
+                              <td className="py-2 px-1 text-sm text-hud-text-primary text-right">{item.ratio}%</td>
+                              <td className="py-2 px-1 text-sm text-hud-accent-primary text-right font-medium">{formatPriceMan(item.avgPrice)}</td>
+                              <td className="py-2 px-1 text-sm text-hud-text-primary text-right">{formatPriceMan(item.medianPrice)}</td>
+                              <td className="py-2 px-1 text-sm text-hud-text-primary text-right">
+                                <div className="text-xs">
+                                  <span className="text-hud-accent-success">{formatPriceMan(item.minPrice)}</span>
+                                  <span className="text-hud-text-muted mx-1">~</span>
+                                  <span className="text-hud-accent-warning">{formatPriceMan(item.maxPrice)}</span>
+                                </div>
+                              </td>
+                              <td className="py-2 px-1 text-sm text-hud-text-primary text-right">
+                                {item.avgPricePerArea > 0 ? `${item.avgPricePerArea.toLocaleString()}만/㎡` : '-'}
+                              </td>
+                              <td className="py-2 px-1 text-xs text-hud-text-muted">
+                                {formatMonthLabel(item.recentMonth)}
+                                {item.recentYmd ? <span className="ml-1">({formatYmd(item.recentYmd)})</span> : null}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </HudCard>
+
+          <HudCard
+            title="시장 요약"
+            subtitle={selectedRegion
+              ? `${selectedRegion}의 부동산 시장 핵심 지표`
+              : '선택된 지역의 부동산 시장 핵심 지표'}
+          >
+            <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
+              <HudCard className="p-4 hover:border-hud-accent-info/30 transition-colors">
+                <p className="text-xs text-hud-text-muted">총 매물 수</p>
+                <p className="text-xl font-bold text-hud-text-primary mt-1">{result.summary.totalCount.toLocaleString()}</p>
+                <p className="text-xs text-hud-text-muted mt-1">분석 대상 표본</p>
+              </HudCard>
+              <HudCard className="p-4 hover:border-hud-accent-primary/30 transition-colors">
+                <p className="text-xs text-hud-text-muted">평균가</p>
+                <p className="text-xl font-bold text-hud-accent-primary mt-1">{formatPriceMan(result.summary.avgPrice)}</p>
+                <p className="text-xs text-hud-text-muted mt-1">전체 평균 시세</p>
+              </HudCard>
+              <HudCard className="p-4 hover:border-hud-accent-info/30 transition-colors">
+                <p className="text-xs text-hud-text-muted">중위가</p>
+                <p className="text-xl font-bold text-hud-accent-info mt-1">{formatPriceMan(result.summary.medianPrice)}</p>
+                <p className="text-xs text-hud-text-muted mt-1">대표 시세 중심값</p>
+              </HudCard>
+              <HudCard className="p-4 hover:border-hud-accent-success/30 transition-colors">
+                <p className="text-xs text-hud-text-muted">최저가</p>
+                <p className="text-xl font-bold text-hud-accent-success mt-1">{formatPriceMan(result.summary.minPrice)}</p>
+                <p className="text-xs text-hud-text-muted mt-1">하단 가격대</p>
+              </HudCard>
+              <HudCard className="p-4 hover:border-hud-accent-warning/30 transition-colors">
+                <p className="text-xs text-hud-text-muted">최고가</p>
+                <p className="text-xl font-bold text-hud-accent-warning mt-1">{formatPriceMan(result.summary.maxPrice)}</p>
+                <p className="text-xs text-hud-text-muted mt-1">상단 가격대</p>
+              </HudCard>
+              <HudCard className="p-4 hover:border-hud-accent-primary/30 transition-colors">
+                <p className="text-xs text-hud-text-muted">평균 평단가</p>
+                <p className="text-xl font-bold text-hud-text-primary mt-1">{result.summary.avgPricePerArea.toLocaleString()}만/㎡</p>
+                <p className="text-xs text-hud-text-muted mt-1">면적당 가격</p>
+              </HudCard>
+            </div>
+          </HudCard>
+
+          {segmentStats.length > 0 && (
+            <HudCard
+              title="세그먼트별 분석"
+              subtitle="매물 유형과 거래 유형 조합별 상세 통계"
+            >
+              <div className="space-y-4">
+                {/* 세그먼트 선택 탭 */}
                 <div className="flex flex-wrap gap-2">
                   {segmentStats.map((segment) => {
                     const key = `${segment.realEstateTypeName}__${segment.tradeTypeName}`;
@@ -766,27 +1183,60 @@ const AddressMarketStats = () => {
                         key={key}
                         type="button"
                         onClick={() => setSelectedSegmentKey(key)}
-                        className={`px-3 py-2 rounded-lg border text-xs transition-colors ${
-                          isActive
-                            ? 'border-hud-accent-primary bg-hud-accent-primary/15 text-hud-accent-primary'
+                        className={`px-4 py-2.5 rounded-lg border text-sm transition-all ${isActive
+                            ? 'border-hud-accent-primary bg-hud-accent-primary/15 text-hud-accent-primary shadow-sm'
                             : 'border-hud-border-secondary bg-hud-bg-primary text-hud-text-secondary hover:border-hud-accent-info/50'
-                        }`}
+                          }`}
                       >
-                        {segment.realEstateTypeName} · {segment.tradeTypeName}
-                        <span className="ml-2 text-[11px] opacity-80">{segment.count.toLocaleString()}건</span>
+                        <div className="flex items-center gap-2">
+                          <span>{segment.realEstateTypeName} · {segment.tradeTypeName}</span>
+                          <span className={`px-2 py-0.5 rounded text-xs ${isActive ? 'bg-hud-accent-primary/20' : 'bg-hud-bg-secondary'}`}>
+                            {segment.count.toLocaleString()}건
+                          </span>
+                        </div>
                       </button>
                     );
                   })}
                 </div>
 
+                {/* 선택된 세그먼트 상세 정보 */}
                 {selectedSegment && (
-                  <>
+                  <div className="border-t border-hud-border-secondary pt-4">
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-lg font-semibold text-hud-text-primary">
+                        {selectedSegment.realEstateTypeName} · {selectedSegment.tradeTypeName}
+                      </h3>
+                      <div className="text-sm text-hud-text-muted">
+                        전체의 <span className="text-hud-accent-primary font-semibold">{selectedSegment.ratio}%</span>
+                      </div>
+                    </div>
+
                     <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
-                      <HudCard className="p-4"><p className="text-xs text-hud-text-muted">매물 수</p><p className="text-xl font-bold text-hud-text-primary mt-1">{selectedSegment.count.toLocaleString()}</p><p className="text-xs text-hud-text-muted mt-1">전체의 {selectedSegment.ratio}%</p></HudCard>
-                      <HudCard className="p-4"><p className="text-xs text-hud-text-muted">평균가</p><p className="text-xl font-bold text-hud-accent-primary mt-1">{formatPriceMan(selectedSegment.avgPrice)}</p><p className="text-xs text-hud-text-muted mt-1">최근 {formatMonthLabel(selectedSegment.recentMonth)}</p></HudCard>
-                      <HudCard className="p-4"><p className="text-xs text-hud-text-muted">중위가</p><p className="text-xl font-bold text-hud-accent-info mt-1">{formatPriceMan(selectedSegment.medianPrice)}</p><p className="text-xs text-hud-text-muted mt-1">대표 시세 중심값</p></HudCard>
-                      <HudCard className="p-4"><p className="text-xs text-hud-text-muted">최저가</p><p className="text-xl font-bold text-hud-accent-success mt-1">{formatPriceMan(selectedSegment.minPrice)}</p><p className="text-xs text-hud-text-muted mt-1">세그먼트 하단</p></HudCard>
-                      <HudCard className="p-4"><p className="text-xs text-hud-text-muted">최고가</p><p className="text-xl font-bold text-hud-accent-warning mt-1">{formatPriceMan(selectedSegment.maxPrice)}</p><p className="text-xs text-hud-text-muted mt-1">세그먼트 상단</p></HudCard>
+                      <HudCard className="p-4">
+                        <p className="text-xs text-hud-text-muted">매물 수</p>
+                        <p className="text-xl font-bold text-hud-text-primary mt-1">{selectedSegment.count.toLocaleString()}</p>
+                        <p className="text-xs text-hud-text-muted mt-1">전체의 {selectedSegment.ratio}%</p>
+                      </HudCard>
+                      <HudCard className="p-4">
+                        <p className="text-xs text-hud-text-muted">평균가</p>
+                        <p className="text-xl font-bold text-hud-accent-primary mt-1">{formatPriceMan(selectedSegment.avgPrice)}</p>
+                        <p className="text-xs text-hud-text-muted mt-1">최근 {formatMonthLabel(selectedSegment.recentMonth)}</p>
+                      </HudCard>
+                      <HudCard className="p-4">
+                        <p className="text-xs text-hud-text-muted">중위가</p>
+                        <p className="text-xl font-bold text-hud-accent-info mt-1">{formatPriceMan(selectedSegment.medianPrice)}</p>
+                        <p className="text-xs text-hud-text-muted mt-1">대표 시세 중심값</p>
+                      </HudCard>
+                      <HudCard className="p-4">
+                        <p className="text-xs text-hud-text-muted">최저가</p>
+                        <p className="text-xl font-bold text-hud-accent-success mt-1">{formatPriceMan(selectedSegment.minPrice)}</p>
+                        <p className="text-xs text-hud-text-muted mt-1">세그먼트 하단</p>
+                      </HudCard>
+                      <HudCard className="p-4">
+                        <p className="text-xs text-hud-text-muted">최고가</p>
+                        <p className="text-xl font-bold text-hud-accent-warning mt-1">{formatPriceMan(selectedSegment.maxPrice)}</p>
+                        <p className="text-xs text-hud-text-muted mt-1">세그먼트 상단</p>
+                      </HudCard>
                       <HudCard className="p-4">
                         <p className="text-xs text-hud-text-muted">{selectedSegment.avgRentPrc > 0 ? '평균 월세' : '평균 평단가'}</p>
                         <p className="text-xl font-bold text-hud-text-primary mt-1">
@@ -801,31 +1251,16 @@ const AddressMarketStats = () => {
                         </p>
                       </HudCard>
                     </div>
-
-                    <div className="flex flex-wrap gap-4 text-xs text-hud-text-muted">
-                      <span>선택 세그먼트: {selectedSegment.realEstateTypeName} / {selectedSegment.tradeTypeName}</span>
-                      <span>전체 요약 매물 수: {result.summary.totalCount.toLocaleString()}건</span>
-                      <span>전체 평균가: {formatPriceMan(result.summary.avgPrice)}</span>
-                    </div>
-                  </>
+                  </div>
                 )}
               </div>
-            ) : (
-              <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
-                <HudCard className="p-4"><p className="text-xs text-hud-text-muted">매물 수</p><p className="text-xl font-bold text-hud-text-primary mt-1">{result.summary.totalCount.toLocaleString()}</p></HudCard>
-                <HudCard className="p-4"><p className="text-xs text-hud-text-muted">평균가</p><p className="text-xl font-bold text-hud-accent-primary mt-1">{formatPriceMan(result.summary.avgPrice)}</p></HudCard>
-                <HudCard className="p-4"><p className="text-xs text-hud-text-muted">중위가</p><p className="text-xl font-bold text-hud-accent-info mt-1">{formatPriceMan(result.summary.medianPrice)}</p></HudCard>
-                <HudCard className="p-4"><p className="text-xs text-hud-text-muted">최저가</p><p className="text-xl font-bold text-hud-accent-success mt-1">{formatPriceMan(result.summary.minPrice)}</p></HudCard>
-                <HudCard className="p-4"><p className="text-xs text-hud-text-muted">최고가</p><p className="text-xl font-bold text-hud-accent-warning mt-1">{formatPriceMan(result.summary.maxPrice)}</p></HudCard>
-                <HudCard className="p-4"><p className="text-xs text-hud-text-muted">평균 평단가(만원/㎡)</p><p className="text-xl font-bold text-hud-text-primary mt-1">{result.summary.avgPricePerArea.toLocaleString()}</p></HudCard>
-              </div>
-            )}
-          </HudCard>
+            </HudCard>
+          )}
 
-          {segmentHighlights && (
+          {segmentHighlights && segmentStats.length > 0 && (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               {segmentHighlights.map((highlight) => (
-                <HudCard key={highlight.label} className="p-4">
+                <HudCard key={highlight.label} className="p-4 hover:border-hud-accent-info/30 transition-colors">
                   <p className="text-xs text-hud-text-muted">{highlight.label}</p>
                   {highlight.item ? (
                     <>
@@ -844,7 +1279,7 @@ const AddressMarketStats = () => {
           )}
 
           {result.summary.infrastructure && (
-            <HudCard title="주요 상권 및 표본 인프라" subtitle={`반경 ${result.filters.radiusMeters}m 내외`}>
+            <HudCard title="주요 상권 및 표본 인프라" subtitle={result.filters.regionName ? `${result.filters.regionName} 중심 생활 인프라` : '중심점 기준 생활 인프라'}>
               <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
                 <div className="flex flex-col items-center justify-center p-3 bg-hud-bg-primary border border-hud-border-secondary rounded-lg"><Train className="w-5 h-5 text-hud-text-secondary mb-1" /><span className="text-xs text-hud-text-muted">지하철역</span><span className="text-sm font-semibold text-hud-text-primary mt-0.5">{result.summary.infrastructure.subway}개</span></div>
                 <div className="flex flex-col items-center justify-center p-3 bg-hud-bg-primary border border-hud-border-secondary rounded-lg"><GraduationCap className="w-5 h-5 text-hud-text-secondary mb-1" /><span className="text-xs text-hud-text-muted">학교</span><span className="text-sm font-semibold text-hud-text-primary mt-0.5">{result.summary.infrastructure.school}개</span></div>
@@ -916,7 +1351,7 @@ const AddressMarketStats = () => {
               )}
             </HudCard>
 
-            <HudCard title="거래유형 분포" subtitle="반경 내 비중">
+            <HudCard title="거래유형 분포" subtitle={result.filters.regionName ? `${result.filters.regionName} 비중` : '선택 지역 비중'}>
               {tradeDonut.total === 0 ? (
                 <p className="text-sm text-hud-text-muted">거래유형 데이터가 없습니다.</p>
               ) : (
@@ -958,7 +1393,7 @@ const AddressMarketStats = () => {
               )}
             </HudCard>
 
-            <HudCard title="매물유형 분포" subtitle="반경 내 비중">
+            <HudCard title="매물유형 분포" subtitle={result.filters.regionName ? `${result.filters.regionName} 비중` : '선택 지역 비중'}>
               {propertyDonut.total === 0 ? (
                 <p className="text-sm text-hud-text-muted">매물유형 데이터가 없습니다.</p>
               ) : (
@@ -1153,10 +1588,95 @@ const AddressMarketStats = () => {
           </HudCard>
 
           <HudCard
+            title="아파트 단지별 통계"
+            subtitle={selectedSegment?.realEstateTypeName === '아파트'
+              ? `${selectedSegment.tradeTypeName} 기준 아파트 단지 표본과 시세를 비교합니다.`
+              : '현재 필터 기준 아파트 단지 표본과 시세를 비교합니다.'}
+          >
+            {activeApartmentComplexStats.length === 0 ? (
+              <p className="text-sm text-hud-text-muted">현재 필터 기준 아파트 단지 데이터가 없습니다.</p>
+            ) : (
+              <div className="space-y-4">
+                {apartmentComplexHighlights && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {apartmentComplexHighlights.map((highlight) => (
+                      <div
+                        key={highlight.label}
+                        className="rounded-xl border border-hud-border-secondary bg-hud-bg-primary/70 p-4"
+                      >
+                        <p className="text-xs text-hud-text-muted">{highlight.label}</p>
+                        {highlight.item ? (
+                          <>
+                            <p className="mt-1 text-sm font-semibold text-hud-text-primary">
+                              {highlight.item.complexName}
+                            </p>
+                            <p className="mt-2 text-lg font-bold text-hud-accent-primary">{highlight.value}</p>
+                            <p className="mt-1 text-xs text-hud-text-muted">{highlight.hint}</p>
+                          </>
+                        ) : (
+                          <p className="mt-2 text-sm text-hud-text-muted">{highlight.hint}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="overflow-auto">
+                  <table className="w-full min-w-[980px]">
+                    <thead>
+                      <tr className="border-b border-hud-border-secondary">
+                        <th className="text-left py-2 px-1 text-xs text-hud-text-muted">단지명</th>
+                        <th className="text-left py-2 px-1 text-xs text-hud-text-muted">거래유형</th>
+                        <th className="text-right py-2 px-1 text-xs text-hud-text-muted">표본 수</th>
+                        <th className="text-right py-2 px-1 text-xs text-hud-text-muted">비중</th>
+                        <th className="text-right py-2 px-1 text-xs text-hud-text-muted">평균가</th>
+                        <th className="text-right py-2 px-1 text-xs text-hud-text-muted">중위가</th>
+                        <th className="text-right py-2 px-1 text-xs text-hud-text-muted">보조 지표</th>
+                        <th className="text-left py-2 px-1 text-xs text-hud-text-muted">최근 집계</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {activeApartmentComplexStats.map((item) => (
+                        <tr key={`${item.complexName}-${item.tradeTypeName}`} className="border-b border-hud-border-secondary/40">
+                          <td className="py-2 px-1 text-sm text-hud-text-primary">
+                            <div className="max-w-[280px] truncate" title={item.complexName}>{item.complexName}</div>
+                            {item.address && (
+                              <div className="max-w-[280px] truncate text-xs text-hud-text-muted" title={item.address}>
+                                <Building2 size={11} className="inline mr-1" />
+                                {item.address}
+                              </div>
+                            )}
+                          </td>
+                          <td className="py-2 px-1 text-sm text-hud-text-primary">{item.tradeTypeName}</td>
+                          <td className="py-2 px-1 text-right text-sm text-hud-text-primary">{item.count.toLocaleString()}건</td>
+                          <td className="py-2 px-1 text-right text-sm text-hud-text-primary">{item.ratio}%</td>
+                          <td className="py-2 px-1 text-right text-sm text-hud-accent-primary">{formatPriceMan(item.avgPrice)}</td>
+                          <td className="py-2 px-1 text-right text-sm text-hud-text-primary">{formatPriceMan(item.medianPrice)}</td>
+                          <td className="py-2 px-1 text-right text-sm text-hud-text-primary">
+                            {item.avgRentPrc > 0
+                              ? `${item.avgRentPrc.toLocaleString()}만`
+                              : item.avgPricePerArea > 0
+                                ? `${item.avgPricePerArea.toLocaleString()}만/㎡`
+                                : '-'}
+                          </td>
+                          <td className="py-2 px-1 text-xs text-hud-text-muted">
+                            {formatMonthLabel(item.recentMonth)}
+                            {item.recentYmd ? <span className="ml-1">({formatYmd(item.recentYmd)})</span> : null}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </HudCard>
+
+          <HudCard
             title="거리 구간별 시세"
             subtitle={selectedSegment
               ? `${selectedSegment.realEstateTypeName} · ${selectedSegment.tradeTypeName} 기준 평균가/중위가 비교`
-              : '반경 내 평균가/중위가 비교'}
+              : '중심점 거리 기준 평균가/중위가 비교'}
           >
             <div className="overflow-x-auto">
               <table className="w-full min-w-[640px]">
@@ -1186,9 +1706,9 @@ const AddressMarketStats = () => {
             title="최근 거래/등록 표본"
             subtitle={selectedSegment
               ? `${selectedSegment.realEstateTypeName} · ${selectedSegment.tradeTypeName} 최신 표본 우선`
-              : '중심점 주변 최신순 30건'}
+              : result.filters.regionName ? `${result.filters.regionName} 최신순 전체 표본` : '중심점 주변 최신순 전체 표본'}
           >
-            <div className="overflow-x-auto">
+            <div className="max-h-[720px] overflow-auto">
               <table className="w-full min-w-[980px]">
                 <thead>
                   <tr className="border-b border-hud-border-secondary">
@@ -1230,9 +1750,27 @@ const AddressMarketStats = () => {
       )}
 
       {!result && !isLoading && !isInitLoading && (
-        <HudCard className="p-8 text-center">
-          <TrendingUp className="w-8 h-8 mx-auto text-hud-accent-primary mb-2" />
-          <p className="text-hud-text-primary font-medium">사무실 기준 위치를 확인한 뒤 주변 통계 분석을 실행해 주세요.</p>
+        <HudCard className="p-12 text-center">
+          <div className="flex flex-col items-center gap-4">
+            <div className="w-16 h-16 rounded-full bg-hud-accent-primary/10 flex items-center justify-center">
+              <TrendingUp className="w-8 h-8 text-hud-accent-primary" />
+            </div>
+            <div>
+              <p className="text-hud-text-primary font-medium text-lg">지역 거래 통계 분석 시작하기</p>
+              <p className="text-hud-text-muted text-sm mt-2 max-w-md mx-auto">
+                지도에서 중심점을 선택하거나 필터를 적용하여 주변 부동산 시장 통계를 확인하세요.
+                사무실 위치를 기준으로 분석이 시작됩니다.
+              </p>
+            </div>
+            {selectedPoint && (
+              <div className="mt-4 p-4 bg-hud-bg-secondary rounded-lg border border-hud-border-secondary">
+                <p className="text-xs text-hud-text-muted mb-1">선택된 중심점</p>
+                <p className="text-sm text-hud-text-primary font-mono">
+                  {selectedPoint.latitude.toFixed(6)}, {selectedPoint.longitude.toFixed(6)}
+                </p>
+              </div>
+            )}
+          </div>
         </HudCard>
       )}
     </div>
