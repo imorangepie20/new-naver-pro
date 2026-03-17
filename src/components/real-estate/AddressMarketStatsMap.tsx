@@ -49,9 +49,17 @@ const createMarkerOverlay = (
   button.style.border = `2px solid ${isActive ? 'rgba(255,255,255,1)' : 'rgba(255,255,255,0.86)'}`;
   button.style.background =
     marker.variant === 'complex'
-      ? (isActive ? 'linear-gradient(135deg, #f59e0b, #f97316)' : 'linear-gradient(135deg, #fbbf24, #f97316)')
-      : (isActive ? 'linear-gradient(135deg, #06b6d4, #0284c7)' : 'linear-gradient(135deg, #0f172a, #1e293b)');
-  button.style.color = '#ffffff';
+      ? (
+          isActive
+            ? 'linear-gradient(135deg, rgba(251, 191, 36, 0.52), rgba(253, 186, 116, 0.52))'
+            : 'linear-gradient(135deg, rgba(252, 211, 77, 0.36), rgba(253, 186, 116, 0.36))'
+        )
+      : (
+          isActive
+            ? 'linear-gradient(135deg, rgba(103, 232, 249, 0.5), rgba(147, 197, 253, 0.5))'
+            : 'linear-gradient(135deg, rgba(226, 232, 240, 0.42), rgba(148, 163, 184, 0.32))'
+        );
+  button.style.color = '#111827';
   button.style.boxShadow = isActive
     ? '0 10px 22px rgba(15, 23, 42, 0.44)'
     : '0 8px 18px rgba(15, 23, 42, 0.28)';
@@ -59,6 +67,8 @@ const createMarkerOverlay = (
   button.style.outline = 'none';
   button.style.whiteSpace = 'nowrap';
   button.style.maxWidth = marker.variant === 'complex' ? '140px' : '120px';
+  button.style.backdropFilter = 'blur(6px)';
+  button.style.webkitBackdropFilter = 'blur(6px)';
 
   const title = document.createElement('div');
   title.style.fontSize = marker.variant === 'complex' ? '11px' : '10px';
@@ -67,12 +77,14 @@ const createMarkerOverlay = (
   title.style.overflow = 'hidden';
   title.style.textOverflow = 'ellipsis';
   title.style.whiteSpace = 'nowrap';
+  title.style.color = '#111827';
   title.textContent = marker.title;
   button.appendChild(title);
 
   const badge = document.createElement('div');
   badge.style.fontSize = marker.variant === 'complex' ? '13px' : '12px';
   badge.style.fontWeight = '800';
+  badge.style.color = '#111827';
   badge.textContent = marker.badge;
   button.appendChild(badge);
 
@@ -84,6 +96,7 @@ const createMarkerOverlay = (
     subtitle.style.overflow = 'hidden';
     subtitle.style.textOverflow = 'ellipsis';
     subtitle.style.whiteSpace = 'nowrap';
+    subtitle.style.color = '#1f2937';
     subtitle.textContent = marker.subtitle;
     button.appendChild(subtitle);
   }
@@ -118,6 +131,7 @@ const AddressMarketStatsMap = ({
   const centerMarkerRef = useRef<any>(null);
   const radiusCircleRef = useRef<any>(null);
   const markerOverlaysRef = useRef<any[]>([]);
+  const viewportSignatureRef = useRef<string>('');
   const clickHandlerRef = useRef<any>(null);
   const onSelectPointRef = useRef(onSelectPoint);
   const onMarkerClickRef = useRef(onMarkerClick);
@@ -240,6 +254,15 @@ const AddressMarketStatsMap = ({
     const kakao = window.kakao;
     if (!map || !kakao?.maps || !isMapReady) return;
 
+    const viewportSignature = JSON.stringify({
+      selectedPoint: selectedPoint
+        ? [selectedPoint.latitude.toFixed(6), selectedPoint.longitude.toFixed(6)]
+        : null,
+      markers: markers.map((marker) => `${marker.id}:${marker.latitude.toFixed(6)}:${marker.longitude.toFixed(6)}`),
+    });
+    const shouldAdjustViewport = viewportSignature !== viewportSignatureRef.current;
+    viewportSignatureRef.current = viewportSignature;
+
     clearMarkerOverlays();
 
     const bounds = new kakao.maps.LatLngBounds();
@@ -266,6 +289,10 @@ const AddressMarketStatsMap = ({
       pointCount += 1;
     });
 
+    if (!shouldAdjustViewport) {
+      return;
+    }
+
     if (pointCount > 1) {
       map.setBounds(bounds, 60, 60, 60, 60);
       return;
@@ -276,17 +303,6 @@ const AddressMarketStatsMap = ({
       map.setLevel(5);
     }
   }, [activeMarkerId, isMapReady, markers, selectedPoint]);
-
-  useEffect(() => {
-    const map = mapInstanceRef.current;
-    const kakao = window.kakao;
-    if (!map || !kakao?.maps || !activeMarkerId) return;
-
-    const activeMarker = markers.find((marker) => marker.id === activeMarkerId);
-    if (!activeMarker) return;
-
-    map.panTo(new kakao.maps.LatLng(activeMarker.latitude, activeMarker.longitude));
-  }, [activeMarkerId, markers]);
 
   return (
     <div className={`relative w-full overflow-hidden rounded-xl border border-hud-border-secondary ${heightClassName}`}>

@@ -297,16 +297,6 @@ const AddressMarketStats = () => {
     void analyzeAroundPoint(selectedPoint);
   }, [authChecked, isAuthenticated, isInitLoading, selectedPoint, realEstateType, tradeType]);
 
-  const propertyTypeLabel = useMemo(
-    () => PROPERTY_TYPE_OPTIONS.find((option) => option.value === realEstateType)?.label || '매물',
-    [realEstateType]
-  );
-
-  const tradeTypeLabel = useMemo(
-    () => TRADE_TYPE_OPTIONS.find((option) => option.value === tradeType)?.label || '거래',
-    [tradeType]
-  );
-
   const mapSamples = result?.mapSamples || [];
   const isApartmentView = realEstateType === 'APT';
 
@@ -428,33 +418,6 @@ const AddressMarketStats = () => {
       variant: 'property',
     }));
   }, [apartmentMarkers, isApartmentView, propertyMarkers]);
-
-  const summaryCards = useMemo(() => {
-    if (!result) return [];
-
-    return [
-      {
-        label: '현재 필터',
-        value: `${propertyTypeLabel} / ${tradeTypeLabel}`,
-        hint: '지도 상단 필터 기준',
-      },
-      {
-        label: '전체 거래 표본',
-        value: `${result.summary.totalCount.toLocaleString()}건`,
-        hint: result.sourceMeta?.region || '선택 위치 기준',
-      },
-      {
-        label: '평균 거래가',
-        value: formatPriceMan(result.summary.avgPrice),
-        hint: result.summary.medianPrice > 0 ? `중위가 ${formatPriceMan(result.summary.medianPrice)}` : '가격 정보 없음',
-      },
-      {
-        label: '지도 마커',
-        value: `${mapMarkers.length.toLocaleString()}개`,
-        hint: '좌표가 있는 거래 데이터만 표시',
-      },
-    ];
-  }, [mapMarkers.length, propertyTypeLabel, result, tradeTypeLabel]);
 
   const renderFallbackRecentTransactions = () => {
     if (!result || result.recentTransactions.length === 0) {
@@ -638,16 +601,6 @@ const AddressMarketStats = () => {
 
       {result && (
         <>
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-            {summaryCards.map((card) => (
-              <div key={card.label} className="rounded-xl border border-hud-border-secondary bg-hud-bg-primary/70 p-4">
-                <p className="text-xs text-hud-text-muted">{card.label}</p>
-                <p className="mt-2 text-lg font-semibold text-hud-text-primary">{card.value}</p>
-                <p className="mt-1 text-xs text-hud-text-muted">{card.hint}</p>
-              </div>
-            ))}
-          </div>
-
           {result.sourceMeta && (
             <HudCard className="p-0">
               <div className="flex flex-wrap items-center gap-2 px-5 py-4 text-xs">
