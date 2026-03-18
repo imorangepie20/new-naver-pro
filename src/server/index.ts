@@ -2225,19 +2225,16 @@ app.get('/api/statistics/office-center', async (c) => {
     const baseAddress = (user.address || '').trim();
     const detailAddress = (user.detailAddress || '').trim();
     const officeAddress = [baseAddress, detailAddress].filter(Boolean).join(' ').trim();
-    const addressQueries = Array.from(
-      new Set([baseAddress, officeAddress].filter((v): v is string => !!v && v.length >= 2))
-    );
     let centerLat: number | null = null;
     let centerLng: number | null = null;
-    let source: 'office-address-geocode-rest' | 'office-address-geocode-failed' = 'office-address-geocode-failed';
+    let source: 'office-address-vworld' | 'office-address-db' | 'office-address-geocode-failed' = 'office-address-geocode-failed';
     let matchedCount = 0;
     let geocodeMessage: string | null = null;
     let geocodeQueryUsed: string | null = null;
-    const kakaoRestApiKey = (
-      process.env.KAKAO_REST_API_KEY ||
-      process.env.KAKAO_LOCAL_REST_API_KEY ||
-      process.env.KAKAO_MAP_REST_API_KEY ||
+    const vworldApiKey = (
+      process.env.VWORLD_API_KEY ||
+      process.env.VWORLD_SERVICE_KEY ||
+      process.env.VITE_VWORLD_API_KEY ||
       ''
     ).trim();
 
@@ -2269,59 +2266,132 @@ app.get('/api/statistics/office-center', async (c) => {
       return Array.from(candidates);
     };
 
-    const parseKakaoPoint = (doc?: { x?: string; y?: string } | null) => {
-      if (!doc?.x || !doc?.y) return null;
-      const latitude = Number(doc.y);
-      const longitude = Number(doc.x);
-      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
-      return { latitude, longitude };
+    const resolvePointFromDb = async (query: string) => {
+      const [propertyMatches, complexMatches] = await Promise.all([
+        prisma.property.findMany({
+          where: {
+            userId,
+            latitude: { not: null },
+            longitude: { not: null },
+            OR: [
+              { buildingName: { contains: query, mode: 'insensitive' } },
+              { cortarAddress: { contains: query, mode: 'insensitive' } },
+              { roadAddress: { contains: query, mode: 'insensitive' } },
+              { detailAddress: { contains: query, mode: 'insensitive' } },
+            ],
+          },
+          select: {
+            latitude: true,
+            longitude: true,
+          },
+          take: 40,
+          orderBy: { createdAt: 'desc' },
+        }),
+        prisma.complex.findMany({
+          where: {
+            OR: [
+              { complexName: { contains: query, mode: 'insensitive' } },
+              { cortarAddress: { contains: query, mode: 'insensitive' } },
+              { roadAddress: { contains: query, mode: 'insensitive' } },
+              { detailAddress: { contains: query, mode: 'insensitive' } },
+            ],
+          },
+          select: {
+            latitude: true,
+            longitude: true,
+          },
+          take: 40,
+          orderBy: { updatedAt: 'desc' },
+        }),
+      ]);
+
+      const points = [
+        ...propertyMatches.map((row) => ({ latitude: row.latitude!, longitude: row.longitude! })),
+        ...complexMatches.map((row) => ({ latitude: row.latitude, longitude: row.longitude })),
+      ].filter((row) =>
+        Number.isFinite(row.latitude) && Number.isFinite(row.longitude)
+      );
+
+      if (points.length === 0) return null;
+
+      return {
+        latitude: points.reduce((sum, row) => sum + row.latitude, 0) / points.length,
+        longitude: points.reduce((sum, row) => sum + row.longitude, 0) / points.length,
+        matchedCount: points.length,
+      };
     };
 
-    const geocodeByKakaoRest = async (query: string) => {
-      const request = async (url: string) => {
-        const response = await fetch(url, {
-          headers: {
-            Authorization: `KakaoAK ${kakaoRestApiKey}`,
-          },
+    const geocodeByVworld = async (query: string) => {
+      if (!vworldApiKey) return null;
+
+      const requestTypes = ['ROAD', 'PARCEL'] as const;
+      for (const type of requestTypes) {
+        const params = new URLSearchParams({
+          service: 'address',
+          request: 'getCoord',
+          version: '2.0',
+          crs: 'EPSG:4326',
+          format: 'json',
+          errorformat: 'json',
+          refine: 'true',
+          simple: 'false',
+          type,
+          address: query,
+          key: vworldApiKey,
         });
 
+        const response = await fetch(`https://api.vworld.kr/req/address?${params.toString()}`);
         if (!response.ok) {
           const body = await response.text();
-          console.warn('[OfficeCenter] Kakao REST geocode failed:', response.status, body.slice(0, 200));
-          return null;
+          console.warn('[OfficeCenter] VWorld geocode failed:', response.status, body.slice(0, 200));
+          continue;
         }
 
         const payload = await response.json() as {
-          documents?: Array<{ x?: string; y?: string }>;
+          response?: {
+            status?: string;
+            error?: { text?: string };
+            result?: {
+              point?: { x?: string | number; y?: string | number };
+            };
+          };
         };
-        return parseKakaoPoint(payload.documents?.[0]);
-      };
 
-      const addressUrl = `https://dapi.kakao.com/v2/local/search/address.json?query=${encodeURIComponent(query)}&page=1&size=1`;
-      const byAddress = await request(addressUrl);
-      if (byAddress) return byAddress;
+        const point = payload.response?.result?.point;
+        const latitude = Number(point?.y);
+        const longitude = Number(point?.x);
+        if (
+          payload.response?.status === 'OK'
+          && Number.isFinite(latitude)
+          && Number.isFinite(longitude)
+        ) {
+          return { latitude, longitude };
+        }
+      }
 
-      const keywordUrl = `https://dapi.kakao.com/v2/local/search/keyword.json?query=${encodeURIComponent(query)}&page=1&size=1`;
-      return request(keywordUrl);
+      return null;
     };
 
-    // 1) 카카오 REST API로 사무실 주소 좌표 변환
-    if (addressQueries.length > 0) {
-      if (!kakaoRestApiKey) {
-        console.warn('[OfficeCenter] KAKAO_REST_API_KEY is missing. Skip REST geocode.');
-      } else {
-        const candidates = buildAddressCandidates(baseAddress, officeAddress);
-        for (const query of candidates) {
-          const point = await geocodeByKakaoRest(query);
-          if (point) {
-            centerLat = point.latitude;
-            centerLng = point.longitude;
-            source = 'office-address-geocode-rest';
-            matchedCount = 1;
-            geocodeQueryUsed = query;
-            break;
-          }
-        }
+    const candidates = buildAddressCandidates(baseAddress, officeAddress);
+    for (const query of candidates) {
+      const vworldPoint = await geocodeByVworld(query);
+      if (vworldPoint) {
+        centerLat = vworldPoint.latitude;
+        centerLng = vworldPoint.longitude;
+        matchedCount = 1;
+        geocodeQueryUsed = query;
+        source = 'office-address-vworld';
+        break;
+      }
+
+      const dbPoint = await resolvePointFromDb(query);
+      if (dbPoint) {
+        centerLat = dbPoint.latitude;
+        centerLng = dbPoint.longitude;
+        matchedCount = dbPoint.matchedCount;
+        geocodeQueryUsed = query;
+        source = 'office-address-db';
+        break;
       }
     }
 
@@ -2336,9 +2406,9 @@ app.get('/api/statistics/office-center', async (c) => {
     }
 
     if (centerLat === null || centerLng === null) {
-      geocodeMessage = kakaoRestApiKey
-        ? '사무실 주소 좌표 변환 실패(REST 결과 없음)'
-        : 'KAKAO_REST_API_KEY 미설정으로 사무실 주소 좌표 변환 불가';
+      geocodeMessage = vworldApiKey
+        ? '사무실 주소 좌표 변환 실패(VWorld/DB 매칭 없음)'
+        : '사무실 주소 좌표 변환 실패(VWorld 키 없음, DB 매칭 없음)';
 
       return c.json(
         {
@@ -2406,9 +2476,21 @@ app.get('/api/statistics/address-market', async (c) => {
     const lngRaw = parseFloat(c.req.query('lng') || '');
     const realEstateType = (c.req.query('realEstateType') || '').trim();
     const tradeType = (c.req.query('tradeType') || '').trim();
+    const selectedTradeTypes = Array.from(
+      new Set(
+        tradeType
+          .split(':')
+          .map((token) => token.trim())
+          .filter(Boolean)
+          .flatMap((token) => (token === 'LEASE_ALL' ? ['B1', 'B2'] : [token]))
+          .filter((token): token is 'A1' | 'B1' | 'B2' | 'B3' =>
+            token === 'A1' || token === 'B1' || token === 'B2' || token === 'B3'
+          )
+      )
+    );
     const sourceRaw = (c.req.query('source') || 'molit').trim().toLowerCase();
-    const source: 'auto' | 'molit' | 'reb' | 'local' =
-      sourceRaw === 'molit' || sourceRaw === 'reb' || sourceRaw === 'local'
+    const source: 'auto' | 'molit' | 'reb' =
+      sourceRaw === 'molit' || sourceRaw === 'reb'
         ? sourceRaw
         : 'auto';
     const monthsBackRaw = parseInt(c.req.query('monthsBack') || '2', 10);
@@ -2420,6 +2502,12 @@ app.get('/api/statistics/address-market', async (c) => {
 
     const radiusRaw = parseInt(c.req.query('radiusMeters') || '1000');
     const radiusMeters = Number.isNaN(radiusRaw) ? 1000 : Math.min(10000, Math.max(200, radiusRaw));
+    const vworldApiKey = (
+      process.env.VWORLD_API_KEY ||
+      process.env.VWORLD_SERVICE_KEY ||
+      process.env.VITE_VWORLD_API_KEY ||
+      ''
+    ).trim();
 
     const toMedian = (values: number[]) => {
       if (values.length === 0) return 0;
@@ -2629,6 +2717,137 @@ app.get('/api/statistics/address-market', async (c) => {
         });
     };
 
+    const sanitizeAddressQuery = (value: string) =>
+      value
+        .replace(/\([^)]*\)/g, ' ')
+        .replace(/\b\d{1,3}(층|호|동)\b/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    const buildAddressCandidates = (base: string) => {
+      const candidates = new Set<string>();
+      const pushIfValid = (value: string) => {
+        const trimmed = value.trim();
+        if (trimmed.length >= 5) candidates.add(trimmed);
+      };
+
+      pushIfValid(base);
+      pushIfValid(sanitizeAddressQuery(base));
+
+      const tokens = sanitizeAddressQuery(base).split(' ').filter((token) => token.length > 1);
+      if (tokens.length >= 3) {
+        pushIfValid(tokens.slice(0, 3).join(' '));
+        pushIfValid(tokens.slice(0, 4).join(' '));
+      }
+
+      return Array.from(candidates);
+    };
+
+    const resolvePointFromDb = async (query: string) => {
+      const [propertyMatches, complexMatches] = await Promise.all([
+        prisma.property.findMany({
+          where: {
+            userId,
+            latitude: { not: null },
+            longitude: { not: null },
+            OR: [
+              { buildingName: { contains: query, mode: 'insensitive' } },
+              { cortarAddress: { contains: query, mode: 'insensitive' } },
+              { roadAddress: { contains: query, mode: 'insensitive' } },
+              { detailAddress: { contains: query, mode: 'insensitive' } },
+            ],
+          },
+          select: {
+            latitude: true,
+            longitude: true,
+          },
+          take: 60,
+          orderBy: { createdAt: 'desc' },
+        }),
+        prisma.complex.findMany({
+          where: {
+            OR: [
+              { complexName: { contains: query, mode: 'insensitive' } },
+              { cortarAddress: { contains: query, mode: 'insensitive' } },
+              { roadAddress: { contains: query, mode: 'insensitive' } },
+              { detailAddress: { contains: query, mode: 'insensitive' } },
+            ],
+          },
+          select: {
+            latitude: true,
+            longitude: true,
+          },
+          take: 60,
+          orderBy: { updatedAt: 'desc' },
+        }),
+      ]);
+
+      const points = [
+        ...propertyMatches.map((row) => ({ latitude: row.latitude!, longitude: row.longitude! })),
+        ...complexMatches.map((row) => ({ latitude: row.latitude, longitude: row.longitude })),
+      ].filter((row) =>
+        Number.isFinite(row.latitude) && Number.isFinite(row.longitude)
+      );
+
+      if (points.length === 0) return null;
+
+      return {
+        latitude: points.reduce((sum, row) => sum + row.latitude, 0) / points.length,
+        longitude: points.reduce((sum, row) => sum + row.longitude, 0) / points.length,
+      };
+    };
+
+    const geocodeByVworld = async (query: string, logPrefix: string) => {
+      if (!vworldApiKey) return null;
+
+      const requestTypes = ['ROAD', 'PARCEL'] as const;
+      for (const type of requestTypes) {
+        const params = new URLSearchParams({
+          service: 'address',
+          request: 'getCoord',
+          version: '2.0',
+          crs: 'EPSG:4326',
+          format: 'json',
+          errorformat: 'json',
+          refine: 'true',
+          simple: 'false',
+          type,
+          address: query,
+          key: vworldApiKey,
+        });
+
+        const response = await fetch(`https://api.vworld.kr/req/address?${params.toString()}`);
+        if (!response.ok) {
+          const body = await response.text();
+          console.warn(`${logPrefix} VWorld geocode failed:`, response.status, body.slice(0, 200));
+          continue;
+        }
+
+        const payload = await response.json() as {
+          response?: {
+            status?: string;
+            error?: { text?: string };
+            result?: {
+              point?: { x?: string | number; y?: string | number };
+            };
+          };
+        };
+
+        const point = payload.response?.result?.point;
+        const latitude = Number(point?.y);
+        const longitude = Number(point?.x);
+        if (
+          payload.response?.status === 'OK'
+          && Number.isFinite(latitude)
+          && Number.isFinite(longitude)
+        ) {
+          return { latitude, longitude };
+        }
+      }
+
+      return null;
+    };
+
     let centerLat = Number.isFinite(latRaw) ? latRaw : null;
     let centerLng = Number.isFinite(lngRaw) ? lngRaw : null;
     let centerSource: 'query' | 'address' = 'query';
@@ -2638,51 +2857,93 @@ app.get('/api/statistics/address-market', async (c) => {
         return c.json({ error: 'lat/lng 또는 address 중 하나는 필요합니다.' }, 400);
       }
 
-      const [propCandidates, complexCandidates] = await Promise.all([
-        prisma.property.findMany({
-          where: {
-            userId,
-            latitude: { not: null },
-            longitude: { not: null },
-            OR: [
-              { buildingName: { contains: address, mode: 'insensitive' } },
-              { cortarAddress: { contains: address, mode: 'insensitive' } },
-              { roadAddress: { contains: address, mode: 'insensitive' } },
-              { detailAddress: { contains: address, mode: 'insensitive' } },
-            ],
-          },
-          select: { latitude: true, longitude: true },
-          take: 60,
-        }),
-        prisma.complex.findMany({
-          where: {
-            OR: [
-              { complexName: { contains: address, mode: 'insensitive' } },
-              { cortarAddress: { contains: address, mode: 'insensitive' } },
-              { roadAddress: { contains: address, mode: 'insensitive' } },
-              { detailAddress: { contains: address, mode: 'insensitive' } },
-            ],
-          },
-          select: { latitude: true, longitude: true },
-          take: 60,
-        }),
-      ]);
+      const candidates = buildAddressCandidates(address);
+      for (const query of candidates) {
+        const point = await geocodeByVworld(query, '[AddressMarket]') || await resolvePointFromDb(query);
+        if (!point) continue;
 
-      const points = [
-        ...propCandidates.map((p) => ({ lat: p.latitude, lng: p.longitude })),
-        ...complexCandidates.map((x) => ({ lat: x.latitude, lng: x.longitude })),
-      ].filter((v): v is { lat: number; lng: number } => v.lat !== null && v.lng !== null);
-
-      if (points.length === 0) {
-        return c.json({ error: '입력한 주소로 중심 좌표를 찾지 못했습니다.' }, 404);
+        centerLat = point.latitude;
+        centerLng = point.longitude;
+        centerSource = 'address';
+        break;
       }
 
-      centerLat = points.reduce((sum, p) => sum + p.lat, 0) / points.length;
-      centerLng = points.reduce((sum, p) => sum + p.lng, 0) / points.length;
-      centerSource = 'address';
+      if (centerLat === null || centerLng === null) {
+        return c.json({ error: '입력한 주소로 중심 좌표를 찾지 못했습니다.' }, 404);
+      }
     }
 
     const normalizeText = (value: string) => value.replace(/\s+/g, '').toLowerCase();
+
+    const TRADE_TYPE_HINTS: Record<string, string[]> = {
+      A1: ['매매', '매매거래', 'sale'],
+      B1: ['전세', '임대차', 'lease', '전월세'],
+      B2: ['월세', '월임대', 'rent', '전월세'],
+      B3: ['단기임대', '단기', 'short'],
+    };
+    const PROPERTY_TYPE_HINTS: Record<string, string[]> = {
+      APT: ['아파트', '공동주택', 'apt'],
+      OPST: ['오피스텔', 'officetel'],
+      SG: ['상가', '근린', '점포', '상업시설', '상가점포', '상업업무용'],
+      TJ: ['토지', '대지', '임야', '전', '답', 'land'],
+      MIXED_USE: ['주상복합', '복합건물', '복합시설'],
+      DDDGG: ['단독', '다가구', '단독다가구', '단독/다가구'],
+      ONEROOM: ['원룸'],
+      DSD: ['다세대', '연립', '빌라'],
+      COMMERCIAL_LAND: ['상업용부지', '상업용지', '업무용지', '상업용 토지'],
+      GJCG: ['공장', '창고', '지식산업'],
+      HOTEL_MOTEL: ['호텔', '모텔', '숙박'],
+      OTHER: ['기타', 'misc'],
+      VL: ['빌라', '연립', '다세대'],
+      TWOROOM: ['투룸'],
+    };
+    const PRIMARY_PROPERTY_FILTER_CODES = [
+      'APT',
+      'OPST',
+      'SG',
+      'TJ',
+      'MIXED_USE',
+      'DDDGG',
+      'ONEROOM',
+      'DSD',
+      'COMMERCIAL_LAND',
+      'GJCG',
+      'HOTEL_MOTEL',
+    ];
+
+    const matchesAnyHint = (haystacks: string[], hints: string[]) => {
+      if (hints.length === 0) return false;
+      const normalizedHaystacks = haystacks
+        .map((value) => normalizeText(value))
+        .filter((value) => value.length > 0);
+
+      return hints.some((hint) => {
+        const token = normalizeText(hint);
+        return normalizedHaystacks.some((value) => value.includes(token));
+      });
+    };
+
+    const matchesSelectedTradeType = (haystacks: string[], tradeTypeCode?: string | null) => {
+      if (selectedTradeTypes.length === 0) return true;
+      if (tradeTypeCode && selectedTradeTypes.includes(tradeTypeCode as 'A1' | 'B1' | 'B2' | 'B3')) {
+        return true;
+      }
+
+      return selectedTradeTypes.some((code) => matchesAnyHint(haystacks, TRADE_TYPE_HINTS[code] || []));
+    };
+
+    const matchesSelectedPropertyType = (haystacks: string[], propertyTypeCode?: string | null) => {
+      if (!realEstateType) return true;
+      if (propertyTypeCode && propertyTypeCode === realEstateType) return true;
+
+      if (realEstateType === 'OTHER') {
+        return !PRIMARY_PROPERTY_FILTER_CODES.some((code) =>
+          matchesAnyHint(haystacks, PROPERTY_TYPE_HINTS[code] || [])
+        );
+      }
+
+      return matchesAnyHint(haystacks, PROPERTY_TYPE_HINTS[realEstateType] || []);
+    };
 
     const toNumberOrNull = (value: unknown) => {
       if (typeof value === 'number' && Number.isFinite(value)) return value;
@@ -2751,13 +3012,6 @@ app.get('/api/statistics/address-market', async (c) => {
       return null;
     };
 
-    const kakaoRestApiKey = (
-      process.env.KAKAO_REST_API_KEY ||
-      process.env.KAKAO_LOCAL_REST_API_KEY ||
-      process.env.KAKAO_MAP_REST_API_KEY ||
-      ''
-    ).trim();
-
     let regionContext: {
       sido: string | null;
       sigungu: string | null;
@@ -2767,43 +3021,6 @@ app.get('/api/statistics/address-market', async (c) => {
     } | null = null;
     let nearbyRegionNames: string[] = [];
     let nearbyLawdCodes: string[] = [];
-
-    if (kakaoRestApiKey) {
-      try {
-        const coordUrl = `https://dapi.kakao.com/v2/local/geo/coord2regioncode.json?x=${centerLng}&y=${centerLat}`;
-        const response = await fetch(coordUrl, {
-          headers: {
-            Authorization: `KakaoAK ${kakaoRestApiKey}`,
-          },
-        });
-        if (response.ok) {
-          const payload = await response.json() as {
-            documents?: Array<{
-              region_type?: string;
-              address_name?: string;
-              region_1depth_name?: string;
-              region_2depth_name?: string;
-              region_3depth_name?: string;
-              code?: string;
-            }>;
-          };
-          const selected =
-            payload.documents?.find((doc) => doc.region_type === 'B') ||
-            payload.documents?.[0];
-          if (selected) {
-            regionContext = {
-              sido: selected.region_1depth_name || null,
-              sigungu: selected.region_2depth_name || null,
-              dong: selected.region_3depth_name || null,
-              bCode: selected.code || null,
-              display: selected.address_name || null,
-            };
-          }
-        }
-      } catch (regionError) {
-        console.warn('Address market region resolve failed:', regionError);
-      }
-    }
 
     // 중심점 반경에 걸쳐있는 인접 행정구역(법정동/시군구)을 확보해 외부 거래 필터에 사용
     const toRad = (deg: number) => (deg * Math.PI) / 180;
@@ -2819,87 +3036,136 @@ app.get('/api/statistics/address-market', async (c) => {
       return R * cVal;
     };
 
-    const safeCosLocal = Math.max(Math.cos((centerLat * Math.PI) / 180), 0.01);
-    const latDeltaLocal = radiusMeters / 111320;
-    const lngDeltaLocal = radiusMeters / (111320 * safeCosLocal);
-
-    const localWhereClause: any = {
-      userId,
-      latitude: {
-        not: null,
-        gte: centerLat - latDeltaLocal,
-        lte: centerLat + latDeltaLocal,
-      },
-      longitude: {
-        not: null,
-        gte: centerLng - lngDeltaLocal,
-        lte: centerLng + lngDeltaLocal,
-      },
+    const normalizeRealEstateTypeCode = (value: string) => {
+      const normalized = normalizeText(value);
+      if (!normalized) return null;
+      if (normalized.includes('주상복합') || normalized.includes('복합건물')) return 'MIXED_USE';
+      if (normalized.includes('아파트') || normalized.includes('apt')) return 'APT';
+      if (normalized.includes('오피스텔') || normalized.includes('officetel')) return 'OPST';
+      if (normalized.includes('호텔') || normalized.includes('모텔') || normalized.includes('숙박')) return 'HOTEL_MOTEL';
+      if (normalized.includes('상업용부지') || normalized.includes('상업용지') || normalized.includes('업무용지')) return 'COMMERCIAL_LAND';
+      if (normalized.includes('토지') || normalized.includes('land')) return 'TJ';
+      if (normalized.includes('공장') || normalized.includes('창고') || normalized.includes('지식산업')) return 'GJCG';
+      if (normalized.includes('단독') || normalized.includes('다가구')) return 'DDDGG';
+      if (normalized.includes('다세대')) return 'DSD';
+      if (normalized.includes('빌라') || normalized.includes('연립')) return 'VL';
+      if (normalized.includes('원룸')) return 'ONEROOM';
+      if (normalized.includes('투룸')) return 'TWOROOM';
+      if (normalized.includes('상가') || normalized.includes('근린') || normalized.includes('점포') || normalized.includes('상업업무')) return 'SG';
+      if (normalized.includes('기타')) return 'OTHER';
+      return null;
     };
-    if (realEstateType) {
-      localWhereClause.realEstateTypeCode = realEstateType;
-    }
-    if (tradeType) {
-      localWhereClause.tradeTypeCode = tradeType;
-    }
 
-    const localCandidates = await prisma.property.findMany({
-      where: localWhereClause,
-      select: {
-        articleNo: true,
-        articleName: true,
-        buildingName: true,
-        tradeTypeCode: true,
-        tradeTypeName: true,
-        realEstateTypeCode: true,
-        realEstateTypeName: true,
-        dealOrWarrantPrc: true,
-        rentPrc: true,
-        area2: true,
-        latitude: true,
-        longitude: true,
-        articleConfirmYmd: true,
-        cortarAddress: true,
-        roadAddress: true,
-      },
-      take: 1500,
-    });
+    const buildMapSampleQueries = (args: {
+      articleName: string;
+      addressText: string;
+      realEstateTypeCode: string | null;
+    }) => {
+      const article = args.articleName.trim();
+      const addressOnly = sanitizeAddressQuery(args.addressText);
+      const addressCandidates = buildAddressCandidates(addressOnly);
+      const queries = new Set<string>();
+      const pushIfValid = (value: string) => {
+        const trimmed = value.trim();
+        if (trimmed.length >= 3) queries.add(trimmed);
+      };
 
-    const scopedLocalProps = localCandidates
-      .flatMap((row) => {
-        if (row.latitude === null || row.longitude === null) return [];
-        const distanceM = Math.round(haversineMeters(centerLat, centerLng, row.latitude, row.longitude));
-        if (distanceM > radiusMeters) return [];
+      if (
+        args.realEstateTypeCode === 'APT'
+        || args.realEstateTypeCode === 'OPST'
+        || args.realEstateTypeCode === 'MIXED_USE'
+      ) {
+        addressCandidates.forEach((candidate) => {
+          pushIfValid(`${article} ${candidate}`);
+          pushIfValid(`${candidate} ${article}`);
+        });
+        pushIfValid(article);
+      } else {
+        addressCandidates.forEach((candidate) => {
+          pushIfValid(`${candidate} ${article}`);
+          pushIfValid(candidate);
+        });
+        pushIfValid(article);
+      }
+
+      return Array.from(queries);
+    };
+
+    const buildMapLocationKey = (args: {
+      articleName: string;
+      addressText: string;
+      realEstateTypeCode: string | null;
+    }) => {
+      const addressKey = sanitizeAddressQuery(args.addressText);
+      const articleKey = args.articleName.trim();
+      const typeKey = args.realEstateTypeCode || 'unknown';
+
+      if (addressKey.length >= 5) return `${typeKey}__${addressKey}`;
+      if (articleKey.length >= 2) return `${typeKey}__${articleKey}`;
+      return `${typeKey}__sample`;
+    };
+
+    type PublicMapSampleSeed = {
+      idSeed: string;
+      locationKey: string;
+      geocodeQueries: string[];
+      articleNo: string;
+      articleName: string;
+      buildingName: string | null;
+      tradeTypeCode: string | null;
+      tradeTypeName: string;
+      realEstateTypeCode: string | null;
+      realEstateTypeName: string;
+      price: number | null;
+      rentPrc: number | null;
+      area: number | null;
+      articleConfirmYmd: string | null;
+      address: string;
+    };
+
+    const buildPublicMapSamples = async (rows: PublicMapSampleSeed[]) => {
+      if (rows.length === 0) return [];
+
+      const uniqueLocations = Array.from(
+        new Map(rows.map((row) => [row.locationKey, row.geocodeQueries])).entries()
+      ).slice(0, 80);
+
+      const geocodedLocations = new Map<string, { latitude: number; longitude: number }>();
+
+      for (const [locationKey, queries] of uniqueLocations) {
+        for (const query of queries) {
+          const point = await geocodeByVworld(query, '[AddressMarket][MapSamples]') || await resolvePointFromDb(query);
+          if (!point) continue;
+
+          geocodedLocations.set(locationKey, point);
+          break;
+        }
+      }
+
+      return rows.flatMap((row, idx) => {
+        const point = geocodedLocations.get(row.locationKey);
+        if (!point) return [];
 
         return [{
-          ...row,
-          distanceM,
-          addressText: row.roadAddress || row.cortarAddress || '-',
+          id: `${row.idSeed}-${idx}`,
+          articleNo: row.articleNo,
+          articleName: row.articleName,
+          buildingName: row.buildingName,
+          tradeTypeCode: row.tradeTypeCode,
+          tradeTypeName: row.tradeTypeName,
+          realEstateTypeCode: row.realEstateTypeCode,
+          realEstateTypeName: row.realEstateTypeName,
+          price: row.price,
+          rentPrc: row.rentPrc,
+          area: row.area,
+          latitude: point.latitude,
+          longitude: point.longitude,
+          distanceM: Math.round(haversineMeters(centerLat, centerLng, point.latitude, point.longitude)),
+          articleConfirmYmd: row.articleConfirmYmd,
+          address: row.address,
         }];
-      })
-      .sort((a, b) => {
-        if (a.distanceM !== b.distanceM) return a.distanceM - b.distanceM;
-        return (b.articleConfirmYmd || '').localeCompare(a.articleConfirmYmd || '');
       });
-
-    const mapSamples = scopedLocalProps.slice(0, 80).map((row, idx) => ({
-      id: `${row.articleNo}-${row.articleConfirmYmd || 'na'}-${idx}`,
-      articleNo: row.articleNo,
-      articleName: row.articleName,
-      buildingName: row.buildingName,
-      tradeTypeCode: row.tradeTypeCode,
-      tradeTypeName: row.tradeTypeName,
-      realEstateTypeCode: row.realEstateTypeCode,
-      realEstateTypeName: row.realEstateTypeName,
-      price: row.dealOrWarrantPrc,
-      rentPrc: row.rentPrc,
-      area: row.area2,
-      latitude: row.latitude,
-      longitude: row.longitude,
-      distanceM: row.distanceM,
-      articleConfirmYmd: row.articleConfirmYmd,
-      address: row.addressText,
-    }));
+    };
 
     try {
       const regionSearchMeters = Math.max(radiusMeters + 800, Math.round(radiusMeters * 1.5));
@@ -2982,62 +3248,36 @@ app.get('/api/statistics/address-market', async (c) => {
         }
       }
       nearbyRegionNames = Array.from(names);
+
+      const regionCandidates = (intersectedRegions.length > 0 ? intersectedRegions : nearbyRegions)
+        .filter((region) => region.centerLat !== null && region.centerLon !== null)
+        .sort((a, b) => {
+          const aDistance = haversineMeters(centerLat, centerLng, a.centerLat!, a.centerLon!);
+          const bDistance = haversineMeters(centerLat, centerLng, b.centerLat!, b.centerLon!);
+          return aDistance - bDistance;
+        });
+
+      const primaryRegion = regionCandidates[0] || null;
+      if (primaryRegion) {
+        const parentName = primaryRegion.parentCortarNo ? parentMap.get(primaryRegion.parentCortarNo) : null;
+        const displayName = parentName && primaryRegion.depth >= 2
+          ? `${parentName} ${primaryRegion.cortarName}`
+          : primaryRegion.cortarName;
+
+        regionContext = {
+          sido: parentName || null,
+          sigungu: primaryRegion.depth >= 2 ? parentName || null : primaryRegion.cortarName || null,
+          dong: primaryRegion.depth >= 2 ? primaryRegion.cortarName || null : null,
+          bCode: primaryRegion.cortarNo || null,
+          display: displayName || null,
+        };
+      }
     } catch (nearbyRegionError) {
       console.warn('Address market nearby-region resolve failed:', nearbyRegionError);
     }
 
-    // ── 카카오 Local API를 통한 주요 인프라(POI) 카운트 확보 ──
-    const infrastructure: Record<string, number> = {
-      subway: 0,
-      school: 0,
-      hospital: 0,
-      pharmacy: 0,
-      convenience: 0,
-      cafe: 0,
-    };
-    let infrastructureAvailable = false;
-    let infrastructureMessage: string | null = null;
-
-    if (kakaoRestApiKey) {
-      try {
-        const fetchCategoryCount = async (categoryGroupCode: string) => {
-          const url = `https://dapi.kakao.com/v2/local/search/category.json?category_group_code=${categoryGroupCode}&x=${centerLng}&y=${centerLat}&radius=${radiusMeters}`;
-          const response = await fetch(url, {
-            headers: { Authorization: `KakaoAK ${kakaoRestApiKey}` },
-          });
-          if (!response.ok) {
-            const bodyText = await response.text();
-            const compact = bodyText.replace(/\s+/g, ' ').slice(0, 180);
-            throw new Error(`카카오 인프라 API 제한 또는 오류 (${response.status}): ${compact}`);
-          }
-          const data = await response.json() as { meta?: { total_count?: number } };
-          return data.meta?.total_count || 0;
-        };
-
-        const [subway, school, hospital, pharmacy, convenience, cafe] = await Promise.all([
-          fetchCategoryCount('SW8'), // 지하철역
-          fetchCategoryCount('SC4'), // 학교
-          fetchCategoryCount('HP8'), // 병원
-          fetchCategoryCount('PM9'), // 약국
-          fetchCategoryCount('CS2'), // 편의점
-          fetchCategoryCount('CE7'), // 카페
-        ]);
-
-        infrastructure.subway = subway;
-        infrastructure.school = school;
-        infrastructure.hospital = hospital;
-        infrastructure.pharmacy = pharmacy;
-        infrastructure.convenience = convenience;
-        infrastructure.cafe = cafe;
-        infrastructureAvailable = true;
-      } catch (poiError) {
-        console.warn('Address market POI counts resolve failed:', poiError);
-        infrastructureMessage = poiError instanceof Error ? poiError.message : '카카오 인프라 API 호출 실패';
-      }
-    } else {
-      infrastructureMessage = 'KAKAO_REST_API_KEY 미설정으로 인프라 집계 불가';
-    }
-    const summaryInfrastructure = infrastructureAvailable ? infrastructure : undefined;
+    const infrastructureMessage = '이 페이지에서는 외부 인프라 집계를 사용하지 않음';
+    const summaryInfrastructure = undefined;
 
     const externalStatblId = (c.req.query('statblId') || process.env.REB_ADDRESS_MARKET_STATBL_ID || 'A_2024_00900').trim();
     const pageSizeRaw = parseInt(c.req.query('externalPageSize') || process.env.REB_ADDRESS_MARKET_PAGE_SIZE || '1000', 10);
@@ -3100,7 +3340,7 @@ app.get('/api/statistics/address-market', async (c) => {
       distanceStats: [],
       monthlyTrend: [],
       recentTransactions: [],
-      mapSamples,
+      mapSamples: [],
       sourceMeta: {
         sourceType: 'PUBLIC_DATA_EMPTY',
         statblId: externalStatblId,
@@ -3115,163 +3355,6 @@ app.get('/api/statistics/address-market', async (c) => {
         infrastructureMessage,
       },
     });
-
-    const fetchLocalFallbackData = async (fetchedSize: number = 0) => {
-      const scopedProps = scopedLocalProps;
-
-      if (scopedProps.length === 0) {
-        const empty = createEmptyResponse(fetchedSize);
-        return {
-          ...empty,
-          sourceMeta: {
-            ...(empty.sourceMeta || {}),
-            sourceType: 'LOCAL_DB_FALLBACK',
-            statblId: null,
-            serviceName: '자체 DB 반경 내 매물 없음',
-          },
-        };
-      }
-
-      const totalCount = scopedProps.length;
-      const validPrices = scopedProps
-        .map(p => p.dealOrWarrantPrc)
-        .filter((prc): prc is number => prc !== null && prc > 0)
-        .sort((a, b) => a - b);
-
-      const avgPrice = validPrices.length > 0 ? Math.round(validPrices.reduce((a, b) => a + b, 0) / validPrices.length) : 0;
-      const medianPrice = validPrices.length > 0 ? validPrices[Math.floor(validPrices.length / 2)] : 0;
-      const minPrice = validPrices.length > 0 ? validPrices[0] : 0;
-      const maxPrice = validPrices.length > 0 ? validPrices[validPrices.length - 1] : 0;
-
-      const validAreaPrices = scopedProps
-        .filter((p) => p.dealOrWarrantPrc && p.area2 && p.area2 > 0)
-        .map((p) => p.dealOrWarrantPrc! / p.area2!);
-      const avgPricePerArea = validAreaPrices.length > 0
-        ? Math.round(validAreaPrices.reduce((a, b) => a + b, 0) / validAreaPrices.length)
-        : 0;
-
-      const tradeMap = new Map<string, number>();
-      const typeMap = new Map<string, number>();
-      scopedProps.forEach(p => {
-        tradeMap.set(p.tradeTypeName, (tradeMap.get(p.tradeTypeName) || 0) + 1);
-        typeMap.set(p.realEstateTypeName, (typeMap.get(p.realEstateTypeName) || 0) + 1);
-      });
-
-      const tradeDistribution = Array.from(tradeMap.entries()).map(([name, count]) => ({
-        name, count, ratio: Number(((count / totalCount) * 100).toFixed(1))
-      })).sort((a, b) => b.count - a.count);
-
-      const propertyTypeDistribution = Array.from(typeMap.entries()).map(([name, count]) => ({
-        name, count, ratio: Number(((count / totalCount) * 100).toFixed(1))
-      })).sort((a, b) => b.count - a.count);
-
-      const segmentStats = buildSegmentStats(
-        scopedProps.map((row) => ({
-          tradeTypeName: row.tradeTypeName,
-          realEstateTypeName: row.realEstateTypeName,
-          price: row.dealOrWarrantPrc,
-          rentPrc: row.rentPrc,
-          area: row.area2,
-          month: row.articleConfirmYmd ? `${row.articleConfirmYmd.slice(0, 4)}-${row.articleConfirmYmd.slice(4, 6)}` : null,
-          distanceM: row.distanceM,
-          articleConfirmYmd: row.articleConfirmYmd,
-        })),
-        totalCount
-      );
-
-      const monthlyTrend = buildMonthlyTrend(
-        scopedProps.map((row) => ({
-          month: row.articleConfirmYmd ? `${row.articleConfirmYmd.slice(0, 4)}-${row.articleConfirmYmd.slice(4, 6)}` : null,
-          price: row.dealOrWarrantPrc,
-        }))
-      );
-      const segmentMonthlyTrend = buildSegmentMonthlyTrends(
-        scopedProps.map((row) => ({
-          tradeTypeName: row.tradeTypeName,
-          realEstateTypeName: row.realEstateTypeName,
-          price: row.dealOrWarrantPrc,
-          rentPrc: row.rentPrc,
-          area: row.area2,
-          month: row.articleConfirmYmd ? `${row.articleConfirmYmd.slice(0, 4)}-${row.articleConfirmYmd.slice(4, 6)}` : null,
-          distanceM: row.distanceM,
-          articleConfirmYmd: row.articleConfirmYmd,
-        }))
-      );
-      const distanceStats = buildDistanceStats(
-        scopedProps.map((row) => ({ distanceM: row.distanceM, price: row.dealOrWarrantPrc })),
-        regionContext?.display ? `${regionContext.display} 자체 확보 매물` : '자체 확보 반경내 매물'
-      );
-      const segmentDistanceStats = buildSegmentDistanceStats(
-        scopedProps.map((row) => ({
-          tradeTypeName: row.tradeTypeName,
-          realEstateTypeName: row.realEstateTypeName,
-          price: row.dealOrWarrantPrc,
-          rentPrc: row.rentPrc,
-          area: row.area2,
-          month: row.articleConfirmYmd ? `${row.articleConfirmYmd.slice(0, 4)}-${row.articleConfirmYmd.slice(4, 6)}` : null,
-          distanceM: row.distanceM,
-          articleConfirmYmd: row.articleConfirmYmd,
-        }))
-      );
-
-      const recentTransactions = [...scopedProps]
-        .sort((a, b) => {
-          const aKey = a.articleConfirmYmd || '';
-          const bKey = b.articleConfirmYmd || '';
-          if (aKey && bKey) return bKey.localeCompare(aKey);
-          return 0; // fallback
-        })
-        .slice(0, 30)
-        .map((tx) => ({
-          articleNo: tx.articleNo,
-          articleName: tx.articleName,
-          buildingName: tx.buildingName,
-          tradeTypeName: tx.tradeTypeName,
-          realEstateTypeName: tx.realEstateTypeName,
-          price: tx.dealOrWarrantPrc || 0,
-          rentPrc: tx.rentPrc,
-          area: tx.area2,
-          distanceM: tx.distanceM,
-          articleConfirmYmd: tx.articleConfirmYmd,
-          address: tx.addressText,
-        }));
-
-      return {
-        center: { latitude: centerLat, longitude: centerLng, source: centerSource, address: address || null },
-        filters: { radiusMeters, realEstateType: realEstateType || null, tradeType: tradeType || null },
-        summary: {
-          totalCount,
-          avgPrice,
-          medianPrice,
-          minPrice,
-          maxPrice,
-          avgPricePerArea,
-          infrastructure: summaryInfrastructure,
-        },
-        tradeDistribution,
-        propertyTypeDistribution,
-        segmentStats,
-        segmentMonthlyTrend,
-        segmentDistanceStats,
-        distanceStats,
-        monthlyTrend,
-        recentTransactions,
-        mapSamples,
-        sourceMeta: {
-          sourceType: 'LOCAL_DB_FALLBACK',
-          statblId: null,
-          serviceName: '자체 네이버 크롤링 등 DB 확보 매물 기반 시세 산출',
-          listTotalCount: totalCount,
-          fetchedRows: fetchedSize,
-          scopedRows: totalCount,
-          analyzedRows: totalCount,
-          region: regionContext?.display || null,
-          nearbyRegionCount: nearbyRegionNames.length,
-          nearbyRegions: nearbyRegionNames,
-          infrastructureMessage,
-        },
-      };
-    };
 
     if (source === 'molit' || source === 'auto') {
       if (molitConfig.configured) {
@@ -3308,6 +3391,14 @@ app.get('/api/statistics/address-market', async (c) => {
             APT: ['apt-sale'],
             OPST: ['offi-sale'],
             SG: ['bldg-sale'],
+            TJ: ['land-sale'],
+            MIXED_USE: ['apt-sale', 'offi-sale', 'bldg-sale'],
+            DDDGG: ['indvdland-sale'],
+            DSD: ['indvdland-sale'],
+            COMMERCIAL_LAND: ['land-sale'],
+            GJCG: ['indvdland-sale'],
+            HOTEL_MOTEL: ['bldg-sale'],
+            OTHER: ['land-sale', 'indvdland-sale', 'bldg-sale'],
             VL: ['indvdland-sale'],
             ONEROOM: ['indvdland-sale'],
             TWOROOM: ['indvdland-sale'],
@@ -3316,6 +3407,14 @@ app.get('/api/statistics/address-market', async (c) => {
             APT: ['apt-rent'],
             OPST: ['offi-rent'],
             SG: ['bldg-rent'],
+            TJ: ['land-rent'],
+            MIXED_USE: ['apt-rent', 'offi-rent', 'bldg-rent'],
+            DDDGG: ['sh-rent'],
+            DSD: ['sh-rent'],
+            COMMERCIAL_LAND: ['land-rent'],
+            GJCG: ['indvdland-rent'],
+            HOTEL_MOTEL: ['bldg-rent'],
+            OTHER: ['land-rent', 'indvdland-rent', 'bldg-rent', 'sh-rent'],
             VL: ['sh-rent'],
             ONEROOM: ['sh-rent'],
             TWOROOM: ['sh-rent'],
@@ -3325,12 +3424,18 @@ app.get('/api/statistics/address-market', async (c) => {
           const rentCategories = rentByType[realEstateType] || defaultRentCategories;
           let categories: MolitCategory[] = [];
 
-          if (tradeType === 'A1') {
-            categories = saleCategories;
-          } else if (tradeType === 'B1' || tradeType === 'B2') {
-            categories = rentCategories;
-          } else {
-            categories = [...saleCategories, ...rentCategories];
+          const wantsSale = selectedTradeTypes.length === 0 || selectedTradeTypes.includes('A1');
+          const wantsRent =
+            selectedTradeTypes.length === 0
+            || selectedTradeTypes.includes('B1')
+            || selectedTradeTypes.includes('B2')
+            || selectedTradeTypes.includes('B3');
+
+          if (wantsSale) {
+            categories.push(...saleCategories);
+          }
+          if (wantsRent) {
+            categories.push(...rentCategories);
           }
           categories = Array.from(new Set(categories));
 
@@ -3436,7 +3541,6 @@ app.get('/api/statistics/address-market', async (c) => {
               const tradeTypeCode = result.tradeMode === 'sale'
                 ? 'A1'
                 : (rentAmount && rentAmount > 0 ? 'B2' : 'B1');
-              if (tradeType && tradeType !== tradeTypeCode) return [];
 
               const tradeTypeName = tradeTypeCode === 'A1'
                 ? '매매'
@@ -3444,6 +3548,11 @@ app.get('/api/statistics/address-market', async (c) => {
 
               const articleName = pickText(row, ['아파트', '단지', '건물명', '건축물대장건물명', '법정동', 'aptNm', 'offiNm', 'mhouseNm'])
                 || `${result.propertyTypeName} ${tradeTypeName}`;
+              const addressText = addressParts.length > 0 ? addressParts.join(' ') : (regionContext?.display || '-');
+              const realEstateTypeCode = normalizeRealEstateTypeCode(`${result.propertyTypeName} ${articleName}`);
+
+              if (!matchesSelectedTradeType([tradeTypeName, articleName], tradeTypeCode)) return [];
+              if (!matchesSelectedPropertyType([result.propertyTypeName, articleName, addressText], realEstateTypeCode)) return [];
 
               const area = pickNum(row, ['전용면적', '대지면적', '건물면적', '연면적', 'excluUseAr', 'landAr']);
 
@@ -3453,9 +3562,10 @@ app.get('/api/statistics/address-market', async (c) => {
                 value,
                 tradeTypeCode,
                 tradeTypeName,
+                realEstateTypeCode,
                 realEstateTypeName: result.propertyTypeName,
                 articleName,
-                addressText: addressParts.length > 0 ? addressParts.join(' ') : (regionContext?.display || '-'),
+                addressText,
                 articleConfirmYmd,
                 rentPrc: rentAmount,
                 area,
@@ -3545,6 +3655,37 @@ app.get('/api/statistics/address-market', async (c) => {
                 address: row.addressText,
               }));
 
+            const mapSamples = await buildPublicMapSamples(
+              [...normalizedMolit]
+                .sort((a, b) => b.articleConfirmYmd.localeCompare(a.articleConfirmYmd))
+                .slice(0, 80)
+                .map((row, idx) => ({
+                  idSeed: `molit-${idx + 1}`,
+                  locationKey: buildMapLocationKey({
+                    articleName: row.articleName,
+                    addressText: row.addressText,
+                    realEstateTypeCode: row.realEstateTypeCode,
+                  }),
+                  geocodeQueries: buildMapSampleQueries({
+                    articleName: row.articleName,
+                    addressText: row.addressText,
+                    realEstateTypeCode: row.realEstateTypeCode,
+                  }),
+                  articleNo: `molit-${idx + 1}`,
+                  articleName: row.articleName,
+                  buildingName: row.realEstateTypeCode === 'APT' ? row.articleName : null,
+                  tradeTypeCode: row.tradeTypeCode,
+                  tradeTypeName: row.tradeTypeName,
+                  realEstateTypeCode: row.realEstateTypeCode,
+                  realEstateTypeName: row.realEstateTypeName,
+                  price: Math.round(row.value),
+                  rentPrc: row.rentPrc,
+                  area: row.area,
+                  articleConfirmYmd: row.articleConfirmYmd,
+                  address: row.addressText,
+                }))
+            );
+
             return c.json({
               center: {
                 latitude: centerLat,
@@ -3629,19 +3770,15 @@ app.get('/api/statistics/address-market', async (c) => {
       }
     }
 
-    if (source === 'local') {
-      return c.json(await fetchLocalFallbackData(0));
-    }
-
     if (!rebConfig.configured) {
-      const localFallback = await fetchLocalFallbackData(0);
+      const empty = createEmptyResponse(0);
       return c.json({
-        ...localFallback,
+        ...empty,
         sourceMeta: {
-          ...(localFallback.sourceMeta || {}),
+          ...(empty.sourceMeta || {}),
           serviceName: source === 'reb'
-            ? 'REB API 키 미설정, 로컬 DB로 분석'
-            : '공공 API 키 미설정, 로컬 DB로 분석',
+            ? 'REB API 키 미설정'
+            : '공공 API 키 미설정',
         },
       });
     }
@@ -3650,25 +3787,25 @@ app.get('/api/statistics/address-market', async (c) => {
       await loadRebRows();
     } catch (rebError) {
       console.warn('[AddressMarket][REB] fetch failed:', rebError);
-      const localFallback = await fetchLocalFallbackData(0);
+      const empty = createEmptyResponse(0);
       return c.json({
-        ...localFallback,
+        ...empty,
         sourceMeta: {
-          ...(localFallback.sourceMeta || {}),
+          ...(empty.sourceMeta || {}),
           serviceName: source === 'reb'
-            ? 'REB 통계 조회 실패, 로컬 DB로 분석'
-            : '공공 통계 조회 실패, 로컬 DB로 분석',
+            ? 'REB 통계 조회 실패'
+            : '공공 통계 조회 실패',
         },
       });
     }
 
     if (externalRows.length === 0) {
-      const localFallback = await fetchLocalFallbackData(0);
+      const empty = createEmptyResponse(0);
       return c.json({
-        ...localFallback,
+        ...empty,
         sourceMeta: {
-          ...(localFallback.sourceMeta || {}),
-          serviceName: '공공데이터 조회 결과 없음, 로컬 DB로 분석',
+          ...(empty.sourceMeta || {}),
+          serviceName: '공공데이터 조회 결과 없음',
         },
       });
     }
@@ -3743,20 +3880,6 @@ app.get('/api/statistics/address-market', async (c) => {
       });
     }
 
-    const tradeTypeHints: Record<string, string[]> = {
-      A1: ['매매', '매매거래', 'sale'],
-      B1: ['전세', '임대차', 'lease'],
-      B2: ['월세', '월임대', 'rent'],
-    };
-    const propertyTypeHints: Record<string, string[]> = {
-      APT: ['아파트', '공동주택', 'apt'],
-      OPST: ['오피스텔', 'officetel'],
-      VL: ['빌라', '연립', '다세대'],
-      ONEROOM: ['원룸'],
-      TWOROOM: ['투룸'],
-      SG: ['상가', '근린', '점포'],
-    };
-
     const normalizedExternal = externalData.map((row) => ({
       ...row,
       normalizedTrade: normalizeText(row.tradeTypeName),
@@ -3765,29 +3888,12 @@ app.get('/api/statistics/address-market', async (c) => {
     }));
 
     const filteredExternalData = normalizedExternal.filter((row) => {
-      if (tradeType) {
-        const hints = tradeTypeHints[tradeType] || [];
-        if (hints.length > 0) {
-          const matched = hints.some((hint) => {
-            const token = normalizeText(hint);
-            return row.normalizedTrade.includes(token) || row.normalizedBag.includes(token);
-          });
-          if (!matched) return false;
-        }
-      }
-
-      if (realEstateType) {
-        const hints = propertyTypeHints[realEstateType] || [];
-        if (hints.length > 0) {
-          const matched = hints.some((hint) => {
-            const token = normalizeText(hint);
-            return row.normalizedType.includes(token) || row.normalizedBag.includes(token);
-          });
-          if (!matched) return false;
-        }
-      }
-
-      return true;
+      return matchesSelectedTradeType(
+        [row.tradeTypeName, `${row.realEstateTypeName} ${row.tradeTypeName} ${row.articleName} ${row.addressText}`]
+      ) && matchesSelectedPropertyType(
+        [row.realEstateTypeName, row.articleName, row.addressText],
+        normalizeRealEstateTypeCode(`${row.realEstateTypeName} ${row.articleName}`)
+      );
     });
 
     if (filteredExternalData.length === 0) { // If filtering by tradeType or realEstateType results in no data
@@ -3933,7 +4039,7 @@ app.get('/api/statistics/address-market', async (c) => {
       distanceStats,
       monthlyTrend,
       recentTransactions,
-      mapSamples,
+      mapSamples: [],
       sourceMeta: {
         sourceType: 'external-reb-confirmed',
         statblId: externalStatblId,
@@ -4651,7 +4757,7 @@ app.put('/api/user/theme', async (c) => {
 app.get('/api/proxy/naver-map', async (c) => {
   try {
     const clientId = process.env.VITE_NAVER_MAP_CLIENT_ID || '8e5c59zw88';
-    const url = `https://openapi.map.naver.com/openapi/v3/maps.js?ncpClientId=${clientId}`;
+    const url = `https://oapi.map.naver.com/openapi/v3/maps.js?ncpKeyId=${encodeURIComponent(clientId)}`;
 
     const response = await fetch(url);
     const content = await response.text();

@@ -38,7 +38,7 @@ const menuSections: MenuSection[] = [
         icon: <Compass size={14} />,
         items: [
             { title: 'Dashboard', icon: <Home size={20} />, path: '/', color: 'cyan' },
-            { title: '통계분석', icon: <BarChart3 size={20} />, path: '/real-estate/address-market-stats', color: 'amber' },
+            { title: '주변 지역 거래 분석', icon: <BarChart3 size={20} />, path: '/real-estate/address-market-stats', color: 'amber' },
             { title: 'REB 통계', icon: <BarChart3 size={20} />, path: '/real-estate/reb-market-stats', color: 'amber' },
             /*{ title: 'Analytics', icon: <BarChart3 size={20} />, path: '/analytics', color: 'amber' },*/
         ],

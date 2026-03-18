@@ -545,7 +545,7 @@ const Dashboard = () => {
             icon: <Briefcase className="w-5 h-5 text-hud-accent-warning" />,
         },
         {
-            title: '주소 통계',
+            title: '주변 지역 거래 분석',
             description: '지역 시세와 입지 흐름을 봅니다',
             path: '/real-estate/address-market-stats',
             icon: <BarChart3 className="w-5 h-5 text-hud-accent-success" />,
