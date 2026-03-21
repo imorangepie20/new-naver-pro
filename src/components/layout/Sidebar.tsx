@@ -7,6 +7,7 @@ import {
     SlidersHorizontal,
     FileText,
     Building2,
+    Users,
     LogOut,
     ChevronDown,
     Compass,
@@ -40,6 +41,14 @@ const menuSections: MenuSection[] = [
             { title: 'Dashboard', icon: <Home size={20} />, path: '/', color: 'cyan' },
             { title: '주변 지역 거래 분석', icon: <BarChart3 size={20} />, path: '/real-estate/address-market-stats', color: 'amber' },
             { title: 'REB 통계', icon: <BarChart3 size={20} />, path: '/real-estate/reb-market-stats', color: 'amber' },
+            {
+                title: '고객정보',
+                icon: <Users size={20} />,
+                color: 'pink',
+                children: [
+                    { title: '고객정보관리', path: '/customers/management' },
+                ],
+            },
             /*{ title: 'Analytics', icon: <BarChart3 size={20} />, path: '/analytics', color: 'amber' },*/
         ],
     },

@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { API_BASE } from '../lib/api'
+import { useAuthStore } from './authStore'
 
 export const hexToRgb = (hex: string): string => {
   const shorthandRegex = /^#?([a-f\d])([a-f\d])([a-f\d])$/i
@@ -119,14 +120,14 @@ export const useThemeStore = create<ThemeState>()((set, get) => ({
 
   saveToServer: async () => {
     const { mode, accentColor, fontSize, borderRadius, compactMode } = get()
+    const { authFetch } = useAuthStore.getState()
 
     try {
       set({ isSaving: true })
 
-      const response = await fetch(`${API_BASE}/api/global-theme`, {
+      const response = await authFetch(`${API_BASE}/api/global-theme`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({
           themeMode: mode,
           accentColor,

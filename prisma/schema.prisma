@@ -50,6 +50,7 @@ model User {
   managedProperties ManagedProperty[]          /// 관리 매물 목록
   favoriteProperties FavoriteProperty[]         /// 관심 매물 목록
   schedules        Schedule[]                  /// 일정 목록
+  customerInfos    CustomerInfo[]              /// 고객 정보 목록
 
   @@map("users")
 }
@@ -431,7 +432,29 @@ model WatchArea {
 }
 
 // ============================================
-// 13. 관리 매물 (계약 관리)
+// 13. 고객 정보
+// ============================================
+
+model CustomerInfo {
+  id                  String    @id @default(cuid())    /// 고객 정보 고유 ID
+  userId              String                            /// 사용자 ID
+  customerKey         String                            /// 고객 매칭 키 (내부용)
+  customerName        String                            /// 고객명
+  customerPhone       String?                           /// 연락처
+  memo                String?   @db.Text               /// 고객 메모
+  createdAt           DateTime  @default(now())         /// 등록일
+  updatedAt           DateTime  @updatedAt              /// 수정일
+
+  // 관계
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, customerKey])
+  @@index([userId])
+  @@map("customer_info")
+}
+
+// ============================================
+// 14. 관리 매물 (계약 관리)
 // ============================================
 
 model ManagedProperty {
@@ -496,7 +519,7 @@ model ManagedProperty {
 }
 
 // ============================================
-// 14. 관심 매물 (독립 - 네이버 데이터 무관)
+// 15. 관심 매물 (독립 - 네이버 데이터 무관)
 // ============================================
 
 model FavoriteProperty {

@@ -70,6 +70,7 @@ import FavoritePropertyList from './pages/real-estate/FavoritePropertyList'
 import ManagedPropertyList from './pages/real-estate/ManagedPropertyList'
 import AddressMarketStats from './pages/real-estate/AddressMarketStats'
 import RebMarketStats from './pages/real-estate/RebMarketStats'
+import CustomerInfoManagement from './pages/customers/CustomerInfoManagement'
 
 // Misc Pages
 import Error404 from './pages/Error404'
@@ -160,6 +161,7 @@ function App() {
                     <Route path="real-estate/managed" element={<ManagedPropertyList />} />
                     <Route path="real-estate/address-market-stats" element={<AddressMarketStats />} />
                     <Route path="real-estate/reb-market-stats" element={<RebMarketStats />} />
+                    <Route path="customers/management" element={<CustomerInfoManagement />} />
                 </Route>
 
                 {/* 404 Fallback */}
