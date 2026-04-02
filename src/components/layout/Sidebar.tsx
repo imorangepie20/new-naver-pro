@@ -19,12 +19,18 @@ interface SidebarProps {
     onToggle: () => void
 }
 
+interface MenuChild {
+    title: string
+    path?: string
+    children?: MenuChild[]
+}
+
 interface MenuItem {
     title: string
     icon: React.ReactNode
     path?: string
     color: string
-    children?: { title: string; path: string }[]
+    children?: MenuChild[]
 }
 
 interface MenuSection {
@@ -47,6 +53,7 @@ const menuSections: MenuSection[] = [
                 color: 'pink',
                 children: [
                     { title: '고객정보관리', path: '/customers/management' },
+                    { title: '고객상담관리', path: '/customers/consultations' },
                 ],
             },
             /*{ title: 'Analytics', icon: <BarChart3 size={20} />, path: '/analytics', color: 'amber' },*/
@@ -64,7 +71,15 @@ const menuSections: MenuSection[] = [
                     { title: '매물 등록', path: '/real-estate/register' },
                     { title: '매물 목록', path: '/real-estate/uploaded-properties' },
                     { title: '관심 매물', path: '/real-estate/favorites' },
-                    { title: '관리 매물', path: '/real-estate/managed' },
+                    {
+                        title: '관리 매물',
+                        children: [
+                            { title: '전체', path: '/real-estate/managed' },
+                            { title: '매매', path: '/real-estate/managed/sale' },
+                            { title: '전세', path: '/real-estate/managed/jeonse' },
+                            { title: '월세', path: '/real-estate/managed/monthly' },
+                        ],
+                    },
                 ],
             },
             {
@@ -114,13 +129,27 @@ const Sidebar = ({ collapsed }: SidebarProps) => {
     const [hoveredItem, setHoveredItem] = useState<string | null>(null)
 
     const isActive = (path?: string) => path ? location.pathname === path : false
-    const isParentActive = (children?: { path: string }[]) =>
-        children ? children.some(c => location.pathname === c.path) : false
+    const isNodeActive = (node?: MenuChild | MenuItem): boolean => {
+        if (!node) return false
+        if (node.path && isActive(node.path)) return true
+        return node.children ? node.children.some((child): boolean => isNodeActive(child)) : false
+    }
 
     useEffect(() => {
-        const auto = allItems
-            .filter(i => i.children && isParentActive(i.children))
-            .map(i => i.title)
+        const auto = allItems.flatMap((item) => {
+            if (!item.children || !item.children.some((child) => isNodeActive(child))) {
+                return []
+            }
+
+            const expanded = [item.title]
+            item.children.forEach((child) => {
+                if (child.children && child.children.some((grandChild) => isNodeActive(grandChild))) {
+                    expanded.push(`${item.title}/${child.title}`)
+                }
+            })
+
+            return expanded
+        })
         if (auto.length > 0) {
             setExpandedMenus(prev => [...prev, ...auto.filter(t => !prev.includes(t))])
         }
@@ -132,7 +161,7 @@ const Sidebar = ({ collapsed }: SidebarProps) => {
         )
     }
 
-    const itemActive = (item: MenuItem) => isActive(item.path) || isParentActive(item.children)
+    const itemActive = (item: MenuItem) => isNodeActive(item)
 
     let globalIdx = 0
 
@@ -256,30 +285,94 @@ const Sidebar = ({ collapsed }: SidebarProps) => {
                                                         }`}>
                                                         <div className="ml-6 pl-3 space-y-0.5" style={{ borderLeft: '2px solid rgba(255,255,255,0.2)' }}>
                                                             {item.children.map((child, cIdx) => {
-                                                                const childActive = isActive(child.path)
+                                                                const childActive = isNodeActive(child)
+                                                                const childKey = `${item.title}/${child.title}`
                                                                 return (
-                                                                    <li key={child.path}>
-                                                                        <Link
-                                                                            to={child.path}
-                                                                            onMouseEnter={() => setHoveredItem(child.path)}
-                                                                            onMouseLeave={() => setHoveredItem(null)}
-                                                                            className={`relative flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all duration-200
-                                                                                ${childActive
-                                                                                    ? `bg-white/20 backdrop-blur-lg text-white font-bold shadow-md ring-1 ring-white/25`
-                                                                                    : hoveredItem === child.path
-                                                                                        ? 'bg-white/15 text-white font-medium'
-                                                                                        : 'text-white/60 hover:text-white font-medium'
-                                                                                }`}
-                                                                            style={{
-                                                                                animation: expandedMenus.includes(item.title)
-                                                                                    ? `sbSlide 0.3s ease-out ${cIdx * 60}ms both`
-                                                                                    : undefined,
-                                                                            }}
-                                                                        >
-                                                                            <span className={`w-2 h-2 rounded-full transition-all duration-300 ${childActive ? `${c.subDot} scale-125 shadow-[0_0_6px] shadow-current` : 'bg-white/30'
-                                                                                }`} />
-                                                                            <span>{child.title}</span>
-                                                                        </Link>
+                                                                    <li key={child.path || childKey}>
+                                                                        {child.children ? (
+                                                                            <div>
+                                                                                <button
+                                                                                    type="button"
+                                                                                    onClick={() => toggleMenu(childKey)}
+                                                                                    onMouseEnter={() => setHoveredItem(childKey)}
+                                                                                    onMouseLeave={() => setHoveredItem(null)}
+                                                                                    className={`relative flex w-full items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all duration-200 ${childActive
+                                                                                        ? 'bg-white/20 backdrop-blur-lg text-white font-bold shadow-md ring-1 ring-white/25'
+                                                                                        : hoveredItem === childKey
+                                                                                            ? 'bg-white/15 text-white font-medium'
+                                                                                            : 'text-white/60 hover:text-white font-medium'
+                                                                                        }`}
+                                                                                    style={{
+                                                                                        animation: expandedMenus.includes(item.title)
+                                                                                            ? `sbSlide 0.3s ease-out ${cIdx * 60}ms both`
+                                                                                            : undefined,
+                                                                                    }}
+                                                                                >
+                                                                                    <span className={`w-2 h-2 rounded-full transition-all duration-300 ${childActive ? `${c.subDot} scale-125 shadow-[0_0_6px] shadow-current` : 'bg-white/30'
+                                                                                        }`} />
+                                                                                    <span className="flex-1 text-left">{child.title}</span>
+                                                                                    <ChevronDown
+                                                                                        size={12}
+                                                                                        className={`transition-transform duration-300 ${expandedMenus.includes(childKey) ? 'rotate-180' : ''}`}
+                                                                                    />
+                                                                                </button>
+
+                                                                                <ul className={`overflow-hidden transition-all duration-300 ease-out ${expandedMenus.includes(childKey) ? 'max-h-56 opacity-100 mt-1' : 'max-h-0 opacity-0'
+                                                                                    }`}>
+                                                                                    <div className="ml-4 pl-3 space-y-0.5" style={{ borderLeft: '2px solid rgba(255,255,255,0.18)' }}>
+                                                                                        {child.children.map((grandChild, grandChildIdx) => {
+                                                                                            const grandChildActive = isNodeActive(grandChild)
+                                                                                            return (
+                                                                                                <li key={grandChild.path || `${childKey}/${grandChild.title}`}>
+                                                                                                    <Link
+                                                                                                        to={grandChild.path || '#'}
+                                                                                                        onMouseEnter={() => setHoveredItem(grandChild.path || `${childKey}/${grandChild.title}`)}
+                                                                                                        onMouseLeave={() => setHoveredItem(null)}
+                                                                                                        className={`relative flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all duration-200 ${grandChildActive
+                                                                                                            ? 'bg-white/20 backdrop-blur-lg text-white font-bold shadow-md ring-1 ring-white/25'
+                                                                                                            : hoveredItem === (grandChild.path || `${childKey}/${grandChild.title}`)
+                                                                                                                ? 'bg-white/15 text-white font-medium'
+                                                                                                                : 'text-white/60 hover:text-white font-medium'
+                                                                                                            }`}
+                                                                                                        style={{
+                                                                                                            animation: expandedMenus.includes(childKey)
+                                                                                                                ? `sbSlide 0.25s ease-out ${grandChildIdx * 50}ms both`
+                                                                                                                : undefined,
+                                                                                                        }}
+                                                                                                    >
+                                                                                                        <span className={`w-1.5 h-1.5 rounded-full transition-all duration-300 ${grandChildActive ? `${c.subDot} scale-125 shadow-[0_0_6px] shadow-current` : 'bg-white/25'
+                                                                                                            }`} />
+                                                                                                        <span>{grandChild.title}</span>
+                                                                                                    </Link>
+                                                                                                </li>
+                                                                                            )
+                                                                                        })}
+                                                                                    </div>
+                                                                                </ul>
+                                                                            </div>
+                                                                        ) : (
+                                                                            <Link
+                                                                                to={child.path || '#'}
+                                                                                onMouseEnter={() => setHoveredItem(child.path || childKey)}
+                                                                                onMouseLeave={() => setHoveredItem(null)}
+                                                                                className={`relative flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all duration-200
+                                                                                    ${childActive
+                                                                                        ? `bg-white/20 backdrop-blur-lg text-white font-bold shadow-md ring-1 ring-white/25`
+                                                                                        : hoveredItem === (child.path || childKey)
+                                                                                            ? 'bg-white/15 text-white font-medium'
+                                                                                            : 'text-white/60 hover:text-white font-medium'
+                                                                                    }`}
+                                                                                style={{
+                                                                                    animation: expandedMenus.includes(item.title)
+                                                                                        ? `sbSlide 0.3s ease-out ${cIdx * 60}ms both`
+                                                                                        : undefined,
+                                                                                }}
+                                                                            >
+                                                                                <span className={`w-2 h-2 rounded-full transition-all duration-300 ${childActive ? `${c.subDot} scale-125 shadow-[0_0_6px] shadow-current` : 'bg-white/30'
+                                                                                    }`} />
+                                                                                <span>{child.title}</span>
+                                                                            </Link>
+                                                                        )}
                                                                     </li>
                                                                 )
                                                             })}

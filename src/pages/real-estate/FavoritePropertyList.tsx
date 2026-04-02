@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Heart, Search, Trash2, Plus, Pencil, X, Eye, Home, DollarSign, FileText } from 'lucide-react'
+import { Heart, Search, Trash2, Plus, Pencil, X, Eye, Home, DollarSign, FileText, ClipboardList } from 'lucide-react'
 import Button from '../../components/common/Button'
 import { useAuthStore } from '../../stores/authStore'
 import { API_BASE } from '../../lib/api'
@@ -17,12 +17,61 @@ interface FavoriteProperty {
     createdAt: string
 }
 
+interface ManagedFormState {
+    articleName: string
+    buildingName: string
+    address: string
+    propertyId: number | null
+    contractType: string
+    propertyType: string
+    downPayment: string
+    downPaymentDate: string
+    interimPayment: string
+    interimPaymentDate: string
+    finalPayment: string
+    finalPaymentDate: string
+    contractDate: string
+    contractEndDate: string
+    totalPrice: string
+    depositAmount: string
+    monthlyRent: string
+    tenantName: string
+    tenantPhone: string
+    managerName: string
+    managerPhone: string
+    notes: string
+}
+
 const PROPERTY_TYPES = ['아파트', '오피스텔', '빌라', '주택', '상가', '토지', '기타']
 const TRADE_TYPES = ['매매', '전세', '월세']
 
 const emptyForm = {
     articleName: '', buildingName: '', address: '',
     propertyType: '', tradeType: '', price: '', area: '', notes: '',
+}
+const emptyManagedForm: ManagedFormState = {
+    articleName: '',
+    buildingName: '',
+    address: '',
+    propertyId: null,
+    contractType: '전세',
+    propertyType: '',
+    downPayment: '',
+    downPaymentDate: '',
+    interimPayment: '',
+    interimPaymentDate: '',
+    finalPayment: '',
+    finalPaymentDate: '',
+    contractDate: '',
+    contractEndDate: '',
+    totalPrice: '',
+    depositAmount: '',
+    monthlyRent: '',
+    tenantName: '',
+    tenantPhone: '',
+    managerName: '',
+    managerPhone: '',
+    notes: '',
 }
 
 function formatPrice(price?: number | null) {
@@ -35,6 +84,59 @@ function formatDate(dateStr: string) {
     return new Date(dateStr).toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' })
 }
 
+function getDefaultContractEndDate(tradeType?: string | null) {
+    const date = new Date()
+    if (tradeType === '매매') {
+        date.setMonth(date.getMonth() + 3)
+    } else {
+        date.setFullYear(date.getFullYear() + 2)
+    }
+    return date.toISOString().split('T')[0]
+}
+
+function parseFavoriteSourceMetadata(notes?: string | null) {
+    const propertyIdMatch = notes?.match(/propertyId:(\d+)/)
+    const managerMatch = notes?.match(/담당:\s*([^()|]+?)(?:\s*\(([^)]+)\))?(?:\s*\||$)/)
+
+    return {
+        propertyId: propertyIdMatch ? Number(propertyIdMatch[1]) : null,
+        managerName: managerMatch?.[1]?.trim() || '',
+        managerPhone: managerMatch?.[2]?.trim() || '',
+    }
+}
+
+function createManagedForm(property: FavoriteProperty): ManagedFormState {
+    const today = new Date().toISOString().split('T')[0]
+    const contractType = property.tradeType || '전세'
+    const metadata = parseFavoriteSourceMetadata(property.notes)
+    const price = property.price ? String(property.price) : ''
+
+    return {
+        articleName: property.articleName || '',
+        buildingName: property.buildingName || '',
+        address: property.address || '',
+        propertyId: metadata.propertyId,
+        contractType,
+        propertyType: property.propertyType || '',
+        downPayment: '',
+        downPaymentDate: '',
+        interimPayment: '',
+        interimPaymentDate: '',
+        finalPayment: '',
+        finalPaymentDate: '',
+        contractDate: today,
+        contractEndDate: getDefaultContractEndDate(contractType),
+        totalPrice: contractType === '매매' ? price : '',
+        depositAmount: contractType === '매매' ? '' : price,
+        monthlyRent: '',
+        tenantName: '',
+        tenantPhone: '',
+        managerName: metadata.managerName,
+        managerPhone: metadata.managerPhone,
+        notes: property.notes || '',
+    }
+}
+
 export default function FavoritePropertyList() {
     const authFetch = useAuthStore((state) => state.authFetch)
     const [properties, setProperties] = useState<FavoriteProperty[]>([])
@@ -43,6 +145,10 @@ export default function FavoritePropertyList() {
     const [showForm, setShowForm] = useState(false)
     const [editingId, setEditingId] = useState<string | null>(null)
     const [form, setForm] = useState(emptyForm)
+    const [showManagedModal, setShowManagedModal] = useState(false)
+    const [managedSourceProperty, setManagedSourceProperty] = useState<FavoriteProperty | null>(null)
+    const [managedForm, setManagedForm] = useState<ManagedFormState>({ ...emptyManagedForm })
+    const [isConverting, setIsConverting] = useState(false)
 
     // ========== 상세보기 모달 상태 ==========
     const [showDetailModal, setShowDetailModal] = useState(false)
@@ -114,6 +220,83 @@ export default function FavoritePropertyList() {
     const viewDetail = (p: FavoriteProperty) => {
         setDetailProperty(p)
         setShowDetailModal(true)
+    }
+
+    const openManagedModal = (property: FavoriteProperty) => {
+        setManagedSourceProperty(property)
+        setManagedForm(createManagedForm(property))
+        setShowManagedModal(true)
+    }
+
+    const closeManagedModal = (force = false) => {
+        if (isConverting && !force) return
+        setShowManagedModal(false)
+        setManagedSourceProperty(null)
+        setManagedForm({ ...emptyManagedForm })
+    }
+
+    const handleConvertToManaged = async () => {
+        if (!managedSourceProperty) return
+
+        if (!managedForm.articleName || !managedForm.contractType || !managedForm.contractDate || !managedForm.contractEndDate) {
+            alert('매물명, 거래유형, 계약시작일, 계약만료일은 필수입니다.')
+            return
+        }
+
+        const body: any = {
+            articleName: managedForm.articleName,
+            buildingName: managedForm.buildingName || null,
+            address: managedForm.address || null,
+            propertyId: managedForm.propertyId,
+            contractType: managedForm.contractType,
+            propertyType: managedForm.propertyType || null,
+            contractDate: managedForm.contractDate,
+            contractEndDate: managedForm.contractEndDate,
+            tenantName: managedForm.tenantName || null,
+            tenantPhone: managedForm.tenantPhone || null,
+            managerName: managedForm.managerName || null,
+            managerPhone: managedForm.managerPhone || null,
+            notes: managedForm.notes || null,
+        }
+
+        const numericFields = ['downPayment', 'interimPayment', 'finalPayment', 'totalPrice', 'depositAmount', 'monthlyRent']
+        for (const field of numericFields) {
+            const value = (managedForm as any)[field]
+            body[field] = value ? parseInt(value, 10) : null
+        }
+
+        const dateFields = ['downPaymentDate', 'interimPaymentDate', 'finalPaymentDate']
+        for (const field of dateFields) {
+            const value = (managedForm as any)[field]
+            body[field] = value || null
+        }
+
+        try {
+            setIsConverting(true)
+
+            const response = await authFetch(`${API_BASE}/api/favorite-properties/${managedSourceProperty.id}/convert-to-managed`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            })
+
+            if (!response.ok) {
+                const data = await response.json().catch(() => ({}))
+                alert(data.error || '관리매물 변경에 실패했습니다.')
+                return
+            }
+
+            closeManagedModal(true)
+            setShowDetailModal(false)
+            setDetailProperty(null)
+            void fetchFavorites()
+            alert('관심매물을 관리매물로 변경했습니다.')
+        } catch (err) {
+            console.error('Failed to convert favorite property:', err)
+            alert('관리매물 변경에 실패했습니다.')
+        } finally {
+            setIsConverting(false)
+        }
     }
 
     const filtered = useMemo(() => {
@@ -256,6 +439,257 @@ export default function FavoritePropertyList() {
                 </div>
             )}
 
+            {showManagedModal && managedSourceProperty && (
+                <div className="hud-modal-overlay" onClick={() => closeManagedModal()}>
+                    <div className="hud-modal-backdrop" />
+                    <div className="hud-modal-panel w-full max-w-3xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+                        <div className="hud-modal-header px-6">
+                            <h2 className="text-lg font-bold text-hud-text-primary">관리매물로 변경</h2>
+                            <button onClick={() => closeManagedModal()} className="hud-modal-close" disabled={isConverting}>
+                                <X className="w-5 h-5 text-hud-text-muted" />
+                            </button>
+                        </div>
+                        <div className="p-6 space-y-6 flex-1 overflow-y-auto">
+                            <div>
+                                <h3 className="text-sm font-semibold text-hud-text-primary mb-3">기본 정보</h3>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="block text-xs font-medium text-hud-text-muted mb-1">매물명 *</label>
+                                        <input
+                                            type="text"
+                                            value={managedForm.articleName}
+                                            onChange={(e) => setManagedForm(prev => ({ ...prev, articleName: e.target.value }))}
+                                            className="w-full px-3 py-2 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-sm text-hud-text-primary focus:outline-none focus:ring-2 focus:ring-hud-accent-primary/30"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-medium text-hud-text-muted mb-1">건물명/단지명</label>
+                                        <input
+                                            type="text"
+                                            value={managedForm.buildingName}
+                                            onChange={(e) => setManagedForm(prev => ({ ...prev, buildingName: e.target.value }))}
+                                            className="w-full px-3 py-2 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-sm text-hud-text-primary focus:outline-none focus:ring-2 focus:ring-hud-accent-primary/30"
+                                        />
+                                    </div>
+                                    <div className="sm:col-span-2">
+                                        <label className="block text-xs font-medium text-hud-text-muted mb-1">주소</label>
+                                        <input
+                                            type="text"
+                                            value={managedForm.address}
+                                            onChange={(e) => setManagedForm(prev => ({ ...prev, address: e.target.value }))}
+                                            className="w-full px-3 py-2 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-sm text-hud-text-primary focus:outline-none focus:ring-2 focus:ring-hud-accent-primary/30"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-medium text-hud-text-muted mb-1">거래 유형 *</label>
+                                        <select
+                                            value={managedForm.contractType}
+                                            onChange={(e) => setManagedForm(prev => ({ ...prev, contractType: e.target.value }))}
+                                            className="w-full px-3 py-2 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-sm text-hud-text-primary focus:outline-none focus:ring-2 focus:ring-hud-accent-primary/30"
+                                        >
+                                            <option value="매매">매매</option>
+                                            <option value="전세">전세</option>
+                                            <option value="월세">월세</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-medium text-hud-text-muted mb-1">매물 유형</label>
+                                        <select
+                                            value={managedForm.propertyType}
+                                            onChange={(e) => setManagedForm(prev => ({ ...prev, propertyType: e.target.value }))}
+                                            className="w-full px-3 py-2 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-sm text-hud-text-primary focus:outline-none focus:ring-2 focus:ring-hud-accent-primary/30"
+                                        >
+                                            <option value="">선택안함</option>
+                                            {PROPERTY_TYPES.map((type) => (
+                                                <option key={type} value={type}>{type}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div>
+                                <h3 className="text-sm font-semibold text-hud-text-primary mb-3">계약 기간</h3>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="block text-xs font-medium text-hud-text-muted mb-1">계약 시작일 *</label>
+                                        <input
+                                            type="date"
+                                            value={managedForm.contractDate}
+                                            onChange={(e) => setManagedForm(prev => ({ ...prev, contractDate: e.target.value }))}
+                                            className="w-full px-3 py-2 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-sm text-hud-text-primary focus:outline-none focus:ring-2 focus:ring-hud-accent-primary/30"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-medium text-hud-text-muted mb-1">계약 만료일 *</label>
+                                        <input
+                                            type="date"
+                                            value={managedForm.contractEndDate}
+                                            onChange={(e) => setManagedForm(prev => ({ ...prev, contractEndDate: e.target.value }))}
+                                            className="w-full px-3 py-2 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-sm text-hud-text-primary focus:outline-none focus:ring-2 focus:ring-hud-accent-primary/30"
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div>
+                                <h3 className="text-sm font-semibold text-hud-text-primary mb-3">금액 정보</h3>
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                    <div>
+                                        <label className="block text-xs font-medium text-hud-text-muted mb-1">총 거래금액 (만원)</label>
+                                        <input
+                                            type="number"
+                                            value={managedForm.totalPrice}
+                                            onChange={(e) => setManagedForm(prev => ({ ...prev, totalPrice: e.target.value }))}
+                                            placeholder="매매의 경우"
+                                            className="w-full px-3 py-2 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-sm text-hud-text-primary focus:outline-none focus:ring-2 focus:ring-hud-accent-primary/30"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-medium text-hud-text-muted mb-1">보증금 (만원)</label>
+                                        <input
+                                            type="number"
+                                            value={managedForm.depositAmount}
+                                            onChange={(e) => setManagedForm(prev => ({ ...prev, depositAmount: e.target.value }))}
+                                            placeholder="전세/월세의 경우"
+                                            className="w-full px-3 py-2 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-sm text-hud-text-primary focus:outline-none focus:ring-2 focus:ring-hud-accent-primary/30"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-medium text-hud-text-muted mb-1">월세 (만원)</label>
+                                        <input
+                                            type="number"
+                                            value={managedForm.monthlyRent}
+                                            onChange={(e) => setManagedForm(prev => ({ ...prev, monthlyRent: e.target.value }))}
+                                            placeholder="월세의 경우"
+                                            className="w-full px-3 py-2 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-sm text-hud-text-primary focus:outline-none focus:ring-2 focus:ring-hud-accent-primary/30"
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div>
+                                <h3 className="text-sm font-semibold text-hud-text-primary mb-3">납부 일정</h3>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="block text-xs font-medium text-hud-text-muted mb-1">계약금 (만원)</label>
+                                        <input
+                                            type="number"
+                                            value={managedForm.downPayment}
+                                            onChange={(e) => setManagedForm(prev => ({ ...prev, downPayment: e.target.value }))}
+                                            className="w-full px-3 py-2 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-sm text-hud-text-primary focus:outline-none focus:ring-2 focus:ring-hud-accent-primary/30"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-medium text-hud-text-muted mb-1">계약금 납부일</label>
+                                        <input
+                                            type="date"
+                                            value={managedForm.downPaymentDate}
+                                            onChange={(e) => setManagedForm(prev => ({ ...prev, downPaymentDate: e.target.value }))}
+                                            className="w-full px-3 py-2 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-sm text-hud-text-primary focus:outline-none focus:ring-2 focus:ring-hud-accent-primary/30"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-medium text-hud-text-muted mb-1">중도금 (만원)</label>
+                                        <input
+                                            type="number"
+                                            value={managedForm.interimPayment}
+                                            onChange={(e) => setManagedForm(prev => ({ ...prev, interimPayment: e.target.value }))}
+                                            className="w-full px-3 py-2 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-sm text-hud-text-primary focus:outline-none focus:ring-2 focus:ring-hud-accent-primary/30"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-medium text-hud-text-muted mb-1">중도금 납부일</label>
+                                        <input
+                                            type="date"
+                                            value={managedForm.interimPaymentDate}
+                                            onChange={(e) => setManagedForm(prev => ({ ...prev, interimPaymentDate: e.target.value }))}
+                                            className="w-full px-3 py-2 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-sm text-hud-text-primary focus:outline-none focus:ring-2 focus:ring-hud-accent-primary/30"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-medium text-hud-text-muted mb-1">잔금 (만원)</label>
+                                        <input
+                                            type="number"
+                                            value={managedForm.finalPayment}
+                                            onChange={(e) => setManagedForm(prev => ({ ...prev, finalPayment: e.target.value }))}
+                                            className="w-full px-3 py-2 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-sm text-hud-text-primary focus:outline-none focus:ring-2 focus:ring-hud-accent-primary/30"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-medium text-hud-text-muted mb-1">잔금 납부일</label>
+                                        <input
+                                            type="date"
+                                            value={managedForm.finalPaymentDate}
+                                            onChange={(e) => setManagedForm(prev => ({ ...prev, finalPaymentDate: e.target.value }))}
+                                            className="w-full px-3 py-2 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-sm text-hud-text-primary focus:outline-none focus:ring-2 focus:ring-hud-accent-primary/30"
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div>
+                                <h3 className="text-sm font-semibold text-hud-text-primary mb-3">담당 정보</h3>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="block text-xs font-medium text-hud-text-muted mb-1">임차인/매수인명</label>
+                                        <input
+                                            type="text"
+                                            value={managedForm.tenantName}
+                                            onChange={(e) => setManagedForm(prev => ({ ...prev, tenantName: e.target.value }))}
+                                            className="w-full px-3 py-2 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-sm text-hud-text-primary focus:outline-none focus:ring-2 focus:ring-hud-accent-primary/30"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-medium text-hud-text-muted mb-1">임차인/매수인 연락처</label>
+                                        <input
+                                            type="text"
+                                            value={managedForm.tenantPhone}
+                                            onChange={(e) => setManagedForm(prev => ({ ...prev, tenantPhone: e.target.value }))}
+                                            className="w-full px-3 py-2 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-sm text-hud-text-primary focus:outline-none focus:ring-2 focus:ring-hud-accent-primary/30"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-medium text-hud-text-muted mb-1">책임자명</label>
+                                        <input
+                                            type="text"
+                                            value={managedForm.managerName}
+                                            onChange={(e) => setManagedForm(prev => ({ ...prev, managerName: e.target.value }))}
+                                            className="w-full px-3 py-2 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-sm text-hud-text-primary focus:outline-none focus:ring-2 focus:ring-hud-accent-primary/30"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-medium text-hud-text-muted mb-1">책임자 연락처</label>
+                                        <input
+                                            type="text"
+                                            value={managedForm.managerPhone}
+                                            onChange={(e) => setManagedForm(prev => ({ ...prev, managerPhone: e.target.value }))}
+                                            className="w-full px-3 py-2 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-sm text-hud-text-primary focus:outline-none focus:ring-2 focus:ring-hud-accent-primary/30"
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-medium text-hud-text-muted mb-1">메모</label>
+                                <textarea
+                                    value={managedForm.notes}
+                                    onChange={(e) => setManagedForm(prev => ({ ...prev, notes: e.target.value }))}
+                                    rows={3}
+                                    className="w-full px-3 py-2 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-sm text-hud-text-primary focus:outline-none focus:ring-2 focus:ring-hud-accent-primary/30 resize-none"
+                                />
+                            </div>
+                        </div>
+                        <div className="hud-modal-footer px-6">
+                            <Button variant="outline" onClick={() => closeManagedModal()} disabled={isConverting}>취소</Button>
+                            <Button onClick={handleConvertToManaged} disabled={isConverting} className="bg-emerald-500 hover:bg-emerald-600 text-white">
+                                {isConverting ? '변경 중...' : '관리매물로 변경'}
+                            </Button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* 리스트 */}
             {loading ? (
                 <div className="flex items-center justify-center py-20 text-hud-text-muted">로딩 중...</div>
@@ -311,6 +745,9 @@ export default function FavoritePropertyList() {
                                             <div className="flex items-center justify-end gap-1">
                                                 <button onClick={() => viewDetail(p)} className="p-1.5 text-hud-text-muted hover:text-hud-accent-info hover:bg-hud-accent-info/10 rounded-lg transition-all" title="상세보기">
                                                     <Eye className="w-4 h-4" />
+                                                </button>
+                                                <button onClick={() => openManagedModal(p)} className="p-1.5 text-hud-text-muted hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition-all" title="관리매물로 변경">
+                                                    <ClipboardList className="w-4 h-4" />
                                                 </button>
                                                 <button onClick={() => handleEdit(p)} className="p-1.5 text-hud-text-muted hover:text-hud-accent-primary hover:bg-hud-accent-primary/10 rounded-lg transition-all" title="수정">
                                                     <Pencil className="w-4 h-4" />
@@ -371,6 +808,9 @@ export default function FavoritePropertyList() {
                                     <div className="flex items-center gap-1">
                                         <button onClick={() => viewDetail(p)} className="p-1.5 text-hud-text-muted hover:text-hud-accent-info hover:bg-hud-accent-info/10 rounded-lg transition-all" title="상세보기">
                                             <Eye className="w-4 h-4" />
+                                        </button>
+                                        <button onClick={() => openManagedModal(p)} className="p-1.5 text-hud-text-muted hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition-all" title="관리매물로 변경">
+                                            <ClipboardList className="w-4 h-4" />
                                         </button>
                                         <button onClick={() => handleEdit(p)} className="p-1.5 text-hud-text-muted hover:text-hud-accent-primary hover:bg-hud-accent-primary/10 rounded-lg transition-all" title="수정">
                                             <Pencil className="w-4 h-4" />
@@ -460,6 +900,17 @@ export default function FavoritePropertyList() {
                             )}
                         </div>
                         <div className="hud-modal-footer px-6 sticky bottom-0">
+                            <Button
+                                variant="outline"
+                                onClick={() => {
+                                    setShowDetailModal(false)
+                                    openManagedModal(detailProperty)
+                                }}
+                                className="flex items-center gap-2"
+                            >
+                                <ClipboardList className="w-4 h-4" />
+                                관리매물 변경
+                            </Button>
                             <Button
                                 variant="outline"
                                 onClick={() => { setShowDetailModal(false); handleEdit(detailProperty); }}

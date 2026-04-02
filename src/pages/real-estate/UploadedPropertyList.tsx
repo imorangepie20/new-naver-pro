@@ -1744,7 +1744,7 @@ const UploadedPropertyList = () => {
                 <h3 className="text-sm font-semibold text-hud-text-primary mb-3">담당 정보</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs font-medium text-hud-text-muted mb-1">책임자명</label>
+                    <label className="block text-xs font-medium text-hud-text-muted mb-1">임차인/매수인명</label>
                     <input
                       type="text"
                       value={managedForm.tenantName}
@@ -1753,7 +1753,7 @@ const UploadedPropertyList = () => {
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-hud-text-muted mb-1">책임자 연락처</label>
+                    <label className="block text-xs font-medium text-hud-text-muted mb-1">임차인/매수인 연락처</label>
                     <input
                       type="text"
                       value={managedForm.tenantPhone}

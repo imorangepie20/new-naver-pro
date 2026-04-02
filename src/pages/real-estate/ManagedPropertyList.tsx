@@ -1,11 +1,12 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import {
     ClipboardList, Plus, Pencil, Trash2, X,
-    DollarSign, User, FileText, Eye, Home, Calendar, Building2, MessageSquareText, RotateCcw, CornerDownLeft, Undo2, Redo2, Send
+    DollarSign, User, FileText, Eye, Home, Calendar, Building2, MessageSquareText, RotateCcw, CornerDownLeft, Undo2, Redo2, Send, Save, Users, UserPlus, UserCheck, Search
 } from 'lucide-react'
 import { EditorContent, useEditor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
+import { useNavigate } from 'react-router-dom'
 import Button from '../../components/common/Button'
 import { useAuthStore } from '../../stores/authStore'
 import { API_BASE } from '../../lib/api'
@@ -85,6 +86,7 @@ const NOTIFICATION_BADGE_STYLES: Record<string, string> = {
     renewal_3: 'border-orange-100 bg-orange-500 text-white shadow-[0_0_22px_rgba(249,115,22,0.44)]',
     renewal_1: 'border-rose-100 bg-rose-500 text-white shadow-[0_0_24px_rgba(244,63,94,0.48)]',
 }
+const ITEMS_PER_PAGE = 10
 
 function formatPrice(price?: number | null) {
     if (!price) return '-'
@@ -132,6 +134,40 @@ function getNotificationBadgeClass(key: string) {
     return NOTIFICATION_BADGE_STYLES[key] || 'border-hud-border-secondary bg-hud-bg-secondary text-hud-text-primary'
 }
 
+function normalizeSearchText(value?: string | null) {
+    return (value || '').trim().toLowerCase()
+}
+
+function normalizeDigits(value?: string | null) {
+    return (value || '').replace(/\D/g, '')
+}
+
+function matchesManagedPropertySearch(property: ManagedProperty, searchTerm: string) {
+    const term = searchTerm.trim().toLowerCase()
+    if (!term) return true
+
+    const searchableTexts = [
+        property.articleName,
+        property.buildingName,
+        property.address,
+        property.contractType,
+        property.propertyType,
+        property.tenantName,
+        property.managerName,
+        property.notes,
+    ]
+
+    if (searchableTexts.some((value) => normalizeSearchText(value).includes(term))) {
+        return true
+    }
+
+    const digitTerm = normalizeDigits(searchTerm)
+    if (!digitTerm) return false
+
+    return [property.tenantPhone, property.managerPhone]
+        .some((value) => normalizeDigits(value).includes(digitTerm))
+}
+
 function renderKakaoTemplate(template: string, property: ManagedProperty | null, daysLeft: number | null) {
     if (!property) return template
 
@@ -166,6 +202,23 @@ function templateToHtml(template: string) {
         .split('\n')
         .map((line) => `<p>${escapeHtml(line) || '<br>'}</p>`)
         .join('')
+}
+
+function getVisiblePageNumbers(currentPage: number, totalPages: number) {
+    const maxVisiblePages = 5
+
+    if (totalPages <= maxVisiblePages) {
+        return Array.from({ length: totalPages }, (_, index) => index + 1)
+    }
+
+    let startPage = Math.max(1, currentPage - Math.floor(maxVisiblePages / 2))
+    let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1)
+
+    if (endPage - startPage + 1 < maxVisiblePages) {
+        startPage = Math.max(1, endPage - maxVisiblePages + 1)
+    }
+
+    return Array.from({ length: endPage - startPage + 1 }, (_, index) => startPage + index)
 }
 
 interface KakaoTemplateEditorProps {
@@ -278,11 +331,19 @@ const emptyForm = {
     tenantName: '', tenantPhone: '', managerName: '', managerPhone: '', notes: '',
 }
 
-export default function ManagedPropertyList() {
+interface ManagedPropertyListProps {
+    contractTypeFilter?: string
+    pageTitle?: string
+}
+
+export default function ManagedPropertyList({ contractTypeFilter, pageTitle }: ManagedPropertyListProps = {}) {
     const authFetch = useAuthStore((state) => state.authFetch)
+    const navigate = useNavigate()
     const [properties, setProperties] = useState<ManagedProperty[]>([])
     const [loading, setLoading] = useState(true)
     const [renewalFilter, setRenewalFilter] = useState<number | undefined>(undefined)
+    const [searchTerm, setSearchTerm] = useState('')
+    const [currentPage, setCurrentPage] = useState(1)
     const [showForm, setShowForm] = useState(false)
     const [editingId, setEditingId] = useState<string | null>(null)
     const [form, setForm] = useState(emptyForm)
@@ -293,6 +354,45 @@ export default function ManagedPropertyList() {
     const [messageTemplate, setMessageTemplate] = useState(DEFAULT_KAKAO_TEMPLATE)
     const [isSendingNotification, setIsSendingNotification] = useState(false)
     const [sendResult, setSendResult] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+    const [isSyncingCustomerInfo, setIsSyncingCustomerInfo] = useState(false)
+    const [customerSyncResult, setCustomerSyncResult] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+    const [savingPropertyIds, setSavingPropertyIds] = useState<Record<string, boolean>>({})
+    const [savedCustomerKeys, setSavedCustomerKeys] = useState<Set<string>>(new Set())
+
+    const buildCustomerKey = (name?: string | null, phone?: string | null) => {
+        const n = (name || '').trim().replace(/\s+/g, ' ').toLowerCase()
+        const p = (phone || '').replace(/\D/g, '')
+        return p ? `${n}:${p}` : n
+    }
+
+    const isCustomerSaved = (p: ManagedProperty) => {
+        if (!p.managerName) return false
+        return savedCustomerKeys.has(buildCustomerKey(p.managerName, p.managerPhone))
+    }
+
+    const trimmedSearchTerm = searchTerm.trim()
+    const filteredByContractType = contractTypeFilter
+        ? properties.filter((property) => property.contractType === contractTypeFilter)
+        : properties
+    const visibleProperties = trimmedSearchTerm
+        ? filteredByContractType.filter((property) => matchesManagedPropertySearch(property, trimmedSearchTerm))
+        : filteredByContractType
+    const totalPages = Math.max(1, Math.ceil(visibleProperties.length / ITEMS_PER_PAGE))
+    const pagedProperties = useMemo(() => {
+        const startIndex = (currentPage - 1) * ITEMS_PER_PAGE
+        return visibleProperties.slice(startIndex, startIndex + ITEMS_PER_PAGE)
+    }, [currentPage, visibleProperties])
+    const visiblePageNumbers = useMemo(
+        () => getVisiblePageNumbers(currentPage, totalPages),
+        [currentPage, totalPages],
+    )
+    const currentRangeStart = visibleProperties.length === 0 ? 0 : (currentPage - 1) * ITEMS_PER_PAGE + 1
+    const currentRangeEnd = visibleProperties.length === 0
+        ? 0
+        : Math.min(currentPage * ITEMS_PER_PAGE, visibleProperties.length)
+    const currentRangeLabel = visibleProperties.length === 0
+        ? '0건'
+        : `${currentRangeStart}-${currentRangeEnd} / ${visibleProperties.length}건`
 
     const fetchProperties = async () => {
         try {
@@ -313,7 +413,30 @@ export default function ManagedPropertyList() {
         }
     }
 
-    useEffect(() => { void fetchProperties() }, [renewalFilter])
+    const fetchSavedCustomerKeys = async () => {
+        try {
+            const res = await authFetch(`${API_BASE}/api/customer-info/saved-customer-keys`)
+            if (!res.ok) return
+            const data = await res.json()
+            if (data.success && Array.isArray(data.customerKeys)) {
+                setSavedCustomerKeys(new Set(data.customerKeys))
+            }
+        } catch (err) {
+            console.error('Failed to fetch saved customer keys:', err)
+        }
+    }
+
+    useEffect(() => { void fetchProperties(); void fetchSavedCustomerKeys() }, [renewalFilter])
+
+    useEffect(() => {
+        setCurrentPage(1)
+    }, [trimmedSearchTerm, renewalFilter, contractTypeFilter])
+
+    useEffect(() => {
+        if (currentPage > totalPages) {
+            setCurrentPage(totalPages)
+        }
+    }, [currentPage, totalPages])
 
     useEffect(() => {
         if (typeof window === 'undefined') return
@@ -416,16 +539,16 @@ export default function ManagedPropertyList() {
         return diffDays
     }
 
-    const previewProperty = [...properties]
+    const previewProperty = [...visibleProperties]
         .sort((a, b) => new Date(a.contractEndDate).getTime() - new Date(b.contractEndDate).getTime())[0] || null
     const previewDaysLeft = previewProperty ? getDaysUntilExpiry(previewProperty.contractEndDate) : null
     const previewMessage = renderKakaoTemplate(messageTemplate, previewProperty, previewDaysLeft)
-    const notificationTargets = properties.filter((property) => property.managerPhone)
-    const skippedNotificationTargets = properties.filter((property) => !property.managerPhone)
+    const notificationTargets = visibleProperties.filter((property) => property.managerPhone)
+    const skippedNotificationTargets = visibleProperties.filter((property) => !property.managerPhone)
     const activeNotificationFilter = RENEWAL_FILTERS.find((filter) => filter.days === renewalFilter) || RENEWAL_FILTERS[0]
 
     const handleSendNotification = async () => {
-        if (properties.length === 0) {
+        if (visibleProperties.length === 0) {
             setSendResult({ type: 'error', text: '알림을 보낼 관리매물이 없습니다.' })
             return
         }
@@ -455,7 +578,7 @@ export default function ManagedPropertyList() {
                 body: JSON.stringify({
                     template: messageTemplate,
                     notificationType: activeNotificationFilter.notificationType,
-                    propertyIds: properties.map((property) => property.id),
+                    propertyIds: visibleProperties.map((property) => property.id),
                 }),
             })
             const data = await res.json().catch(() => ({}))
@@ -520,24 +643,87 @@ export default function ManagedPropertyList() {
         }
     }
 
+    const handleSaveCustomerForProperty = async (p: ManagedProperty) => {
+        try {
+            setSavingPropertyIds((prev) => ({ ...prev, [p.id]: true }))
+            setCustomerSyncResult(null)
+
+            const response = await authFetch(`${API_BASE}/api/customer-info/save-property/${p.id}`, {
+                method: 'POST',
+            })
+            const data = await response.json().catch(() => ({}))
+
+            if (!response.ok || !data.success) {
+                setCustomerSyncResult({
+                    type: 'error',
+                    text: data.error || '고객 등록에 실패했습니다.',
+                })
+                return
+            }
+
+            const key = buildCustomerKey(p.managerName, p.managerPhone)
+            setSavedCustomerKeys((prev) => new Set(prev).add(key))
+            setCustomerSyncResult({
+                type: 'success',
+                text: `${p.managerName} 고객이 등록되었습니다.`,
+            })
+        } catch (error) {
+            console.error('Customer info save failed:', error)
+            setCustomerSyncResult({
+                type: 'error',
+                text: error instanceof Error ? error.message : '고객 등록에 실패했습니다.',
+            })
+        } finally {
+            setSavingPropertyIds((prev) => ({ ...prev, [p.id]: false }))
+        }
+    }
+
     return (
         <div className="p-4 sm:p-6">
             {/* 헤더 */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
                 <div className="flex items-center gap-3">
                     <ClipboardList className="w-6 h-6 text-emerald-400" />
-                    <h1 className="text-xl sm:text-2xl font-bold text-hud-text-primary">관리매물</h1>
+                    <h1 className="text-xl sm:text-2xl font-bold text-hud-text-primary">{pageTitle || '관리매물'}</h1>
                     <span className="text-xs sm:text-sm text-hud-text-muted bg-hud-bg-secondary px-2.5 py-1 rounded-full">
-                        {properties.length}건
+                        {visibleProperties.length}건
                     </span>
                 </div>
-                <Button
-                    onClick={() => { setShowForm(true); setEditingId(null); setForm(emptyForm) }}
-                    className="flex items-center gap-2 bg-emerald-500 hover:bg-emerald-600 text-white w-full sm:w-auto justify-center"
-                >
-                    <Plus className="w-4 h-4" /> 매물 추가
-                </Button>
+                <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+                    <Button
+                        variant="outline"
+                        onClick={() => navigate('/customers/management')}
+                        className="w-full justify-center border-hud-border-secondary bg-hud-bg-card/70 text-hud-text-primary sm:w-auto"
+                    >
+                        <span className="inline-flex items-center gap-2">
+                            <Users className="w-4 h-4" />
+                            고객정보 보기
+                        </span>
+                    </Button>
+                    <Button
+                        onClick={() => {
+                            setShowForm(true)
+                            setEditingId(null)
+                            setForm({
+                                ...emptyForm,
+                                contractType: contractTypeFilter || emptyForm.contractType,
+                            })
+                        }}
+                        className="flex items-center gap-2 bg-emerald-500 hover:bg-emerald-600 text-white w-full sm:w-auto justify-center"
+                    >
+                        <Plus className="w-4 h-4" /> 매물 추가
+                    </Button>
+                </div>
             </div>
+
+            {customerSyncResult && (
+                <div className={`mb-4 rounded-xl border px-4 py-3 text-sm leading-6 ${customerSyncResult.type === 'success'
+                    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+                    : 'border-red-500/30 bg-red-500/10 text-red-300'
+                    }`}>
+                    {customerSyncResult.text}
+                </div>
+            )}
 
             {/* 필터 */}
             <div className="flex flex-col gap-3 mb-6">
@@ -618,7 +804,7 @@ export default function ManagedPropertyList() {
                             <div className="flex flex-col gap-3">
                                 <Button
                                     onClick={handleSendNotification}
-                                    disabled={properties.length === 0 || isSendingNotification}
+                                    disabled={visibleProperties.length === 0 || isSendingNotification}
                                     className="w-full justify-center bg-yellow-500 hover:bg-yellow-600 text-slate-950 disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
                                     <span className="inline-flex items-center gap-2">
@@ -687,6 +873,16 @@ export default function ManagedPropertyList() {
                                             value={form.buildingName}
                                             onChange={e => setForm(prev => ({ ...prev, buildingName: e.target.value }))}
                                             placeholder="예: 래미안아파트"
+                                            className="w-full px-3 py-2 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-sm text-hud-text-primary focus:outline-none focus:ring-2 focus:ring-hud-accent-primary/30"
+                                        />
+                                    </div>
+                                    <div className="col-span-1 sm:col-span-2">
+                                        <label className="block text-xs font-medium text-hud-text-muted mb-1">주소</label>
+                                        <input
+                                            type="text"
+                                            value={form.address}
+                                            onChange={e => setForm(prev => ({ ...prev, address: e.target.value }))}
+                                            placeholder="예: 서울특별시 송파구 올림픽로 300"
                                             className="w-full px-3 py-2 bg-hud-bg-primary border border-hud-border-secondary rounded-lg text-sm text-hud-text-primary focus:outline-none focus:ring-2 focus:ring-hud-accent-primary/30"
                                         />
                                     </div>
@@ -822,7 +1018,7 @@ export default function ManagedPropertyList() {
                                 <h3 className="text-sm font-semibold text-hud-text-primary mb-3 flex items-center gap-2"><User className="w-4 h-4" /> 담당 정보</h3>
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                     <div>
-                                        <label className="block text-xs font-medium text-hud-text-muted mb-1">책임자명</label>
+                                        <label className="block text-xs font-medium text-hud-text-muted mb-1">임차인/매수인명</label>
                                         <input
                                             type="text"
                                             value={form.tenantName}
@@ -831,7 +1027,7 @@ export default function ManagedPropertyList() {
                                         />
                                     </div>
                                     <div>
-                                        <label className="block text-xs font-medium text-hud-text-muted mb-1">책임자 연락처</label>
+                                        <label className="block text-xs font-medium text-hud-text-muted mb-1">임차인/매수인 연락처</label>
                                         <input
                                             type="text"
                                             value={form.tenantPhone}
@@ -882,175 +1078,266 @@ export default function ManagedPropertyList() {
             )}
 
             {/* 리스트 */}
-            {loading ? (
-                <div className="flex items-center justify-center py-20 text-hud-text-muted">로딩 중...</div>
-            ) : properties.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-20 text-hud-text-muted">
-                    <ClipboardList className="w-12 h-12 mb-4 opacity-30" />
-                    <p className="text-lg font-medium">관리매물이 없습니다</p>
-                    <p className="text-sm mt-1">위의 "매물 추가" 버튼으로 관리 매물을 등록하세요</p>
+            <div className="rounded-2xl border border-hud-border-primary bg-hud-bg-secondary/70 overflow-hidden">
+                <div className="border-b border-hud-border-secondary bg-hud-bg-tertiary/40 p-3 sm:p-4">
+                    <div className="relative rounded-xl border border-hud-border-secondary bg-hud-bg-primary/80 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+                        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-hud-text-muted" />
+                        <input
+                            type="text"
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            placeholder="매물명, 건물명, 주소, 거래유형, 임차인/책임자, 연락처 검색..."
+                            className="w-full rounded-xl border-0 bg-white/[0.03] py-2.5 pl-10 pr-11 text-sm text-hud-text-primary placeholder:text-hud-text-muted focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                        />
+                        {trimmedSearchTerm && (
+                            <button
+                                type="button"
+                                onClick={() => setSearchTerm('')}
+                                className="absolute right-2.5 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg text-hud-text-muted transition-hud hover:bg-hud-bg-hover hover:text-hud-text-primary"
+                                aria-label="검색어 지우기"
+                            >
+                                <X className="h-4 w-4" />
+                            </button>
+                        )}
+                    </div>
+                    <div className="mt-2 flex flex-col gap-1 text-[11px] text-hud-text-muted sm:flex-row sm:items-center sm:justify-between">
+                        <p>전화번호는 하이픈 없이 입력해도 검색됩니다.</p>
+                        <p>현재 {currentRangeLabel}{trimmedSearchTerm ? ` · 전체 ${properties.length}건` : ''}</p>
+                    </div>
                 </div>
-            ) : (
-                <>
-                    {/* 데스크톱: 테이블 뷰 */}
-                    <div className="hidden sm:block rounded-xl overflow-hidden border border-hud-border-primary">
-                        <table className="w-full">
-                            <thead>
-                                <tr className="border-b-2 border-hud-border-primary bg-hud-bg-tertiary">
-                                    <th className="px-4 py-3 text-left text-xs font-bold text-hud-text-primary uppercase tracking-wider">매물명</th>
-                                    <th className="px-4 py-3 text-left text-xs font-bold text-hud-text-primary uppercase tracking-wider">매물유형</th>
-                                    <th className="px-4 py-3 text-center text-xs font-bold text-hud-text-primary uppercase tracking-wider">거래</th>
-                                    <th className="px-4 py-3 text-right text-xs font-bold text-hud-text-primary uppercase tracking-wider">가격</th>
-                                    <th className="px-4 py-3 text-right text-xs font-bold text-hud-text-primary uppercase tracking-wider">월세</th>
-                                    <th className="px-4 py-3 text-left text-xs font-bold text-hud-text-primary uppercase tracking-wider">책임자명</th>
-                                    <th className="px-4 py-3 text-left text-xs font-bold text-hud-text-primary uppercase tracking-wider">전화번호</th>
-                                    <th className="px-4 py-3 text-right text-xs font-bold text-hud-text-primary uppercase tracking-wider w-24">관리</th>
-                                </tr>
-                            </thead>
-                            <tbody className="bg-hud-bg-secondary">
-                                {properties.map((p) => {
-                                    const price = p.contractType === '매매' ? p.totalPrice
-                                        : p.contractType === '전세' ? p.depositAmount
+
+                {loading ? (
+                    <div className="flex items-center justify-center py-20 text-hud-text-muted">로딩 중...</div>
+                ) : visibleProperties.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-20 text-hud-text-muted">
+                        <ClipboardList className="mb-4 h-12 w-12 opacity-30" />
+                        <p className="text-lg font-medium">{trimmedSearchTerm ? '검색 결과가 없습니다' : '관리매물이 없습니다'}</p>
+                        <p className="mt-1 text-sm">
+                            {trimmedSearchTerm
+                                ? '다른 검색어로 다시 확인해보세요'
+                                : renewalFilter !== undefined
+                                    ? '선택한 계약사항 알림 조건에 맞는 관리매물이 없습니다'
+                                    : '위의 "매물 추가" 버튼으로 관리 매물을 등록하세요'}
+                        </p>
+                    </div>
+                ) : (
+                    <>
+                        {/* 데스크톱: 테이블 뷰 */}
+                        <div className="hidden sm:block overflow-hidden">
+                            <table className="w-full">
+                                <thead>
+                                    <tr className="border-b-2 border-hud-border-primary bg-hud-bg-tertiary">
+                                        <th className="px-4 py-3 text-left text-xs font-bold text-hud-text-primary uppercase tracking-wider">매물명</th>
+                                        <th className="px-4 py-3 text-left text-xs font-bold text-hud-text-primary uppercase tracking-wider">매물유형</th>
+                                        <th className="px-4 py-3 text-center text-xs font-bold text-hud-text-primary uppercase tracking-wider">거래</th>
+                                        <th className="px-4 py-3 text-right text-xs font-bold text-hud-text-primary uppercase tracking-wider">가격</th>
+                                        <th className="px-4 py-3 text-right text-xs font-bold text-hud-text-primary uppercase tracking-wider">월세</th>
+                                        <th className="px-4 py-3 text-left text-xs font-bold text-hud-text-primary uppercase tracking-wider">책임자명</th>
+                                        <th className="px-4 py-3 text-left text-xs font-bold text-hud-text-primary uppercase tracking-wider">전화번호</th>
+                                        <th className="px-4 py-3 text-right text-xs font-bold text-hud-text-primary uppercase tracking-wider w-24">관리</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="bg-hud-bg-secondary">
+                                    {pagedProperties.map((p) => {
+                                        const price = p.contractType === '매매' ? p.totalPrice
+                                            : p.contractType === '전세' ? p.depositAmount
+                                                : p.monthlyRent;
+
+                                        return (
+                                            <tr key={p.id} className="border-b border-hud-border-primary/50 hover:bg-hud-bg-hover transition-colors">
+                                                <td className="px-4 py-3">
+                                                    <div className="space-y-1">
+                                                        <span className="text-sm font-medium text-hud-text-primary">{p.articleName}</span>
+                                                        {getNotificationBadges(p).length > 0 && (
+                                                            <div className="flex flex-wrap gap-1">
+                                                                {getNotificationBadges(p).map(([key]) => (
+                                                                    <span
+                                                                        key={key}
+                                                                        className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] ${getNotificationBadgeClass(key)}`}
+                                                                    >
+                                                                        {NOTIFICATION_TYPE_LABELS[key]}
+                                                                    </span>
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </td>
+                                                <td className="px-4 py-3">
+                                                    <span className="text-xs px-2 py-1 bg-hud-bg-primary rounded-md text-hud-text-secondary">{p.propertyType || '-'}</span>
+                                                </td>
+                                                <td className="px-4 py-3 text-center">
+                                                    <span className={`inline-flex px-2.5 py-1 text-xs font-medium rounded-lg ${p.contractType === '매매' ? 'bg-red-500/15 text-red-400'
+                                                        : p.contractType === '전세' ? 'bg-emerald-500/15 text-emerald-400'
+                                                            : 'bg-amber-500/15 text-amber-400'
+                                                        }`}>{p.contractType}</span>
+                                                </td>
+                                                <td className="px-4 py-3 text-right text-sm font-semibold text-hud-text-primary">{formatPrice(price)}</td>
+                                                <td className="px-4 py-3 text-right text-sm text-hud-text-secondary">{p.monthlyRent ? formatPrice(p.monthlyRent) : '-'}</td>
+                                                <td className="px-4 py-3 text-sm text-hud-text-secondary">{p.managerName || '-'}</td>
+                                                <td className="px-4 py-3 text-sm text-hud-text-secondary">{p.managerPhone || '-'}</td>
+                                                <td className="px-4 py-3">
+                                                    <div className="flex items-center justify-end gap-1">
+                                                        <button
+                                                            onClick={() => void handleSaveCustomerForProperty(p)}
+                                                            disabled={!!savingPropertyIds[p.id] || !p.managerName}
+                                                            className={`p-1.5 rounded-lg transition-all ${isCustomerSaved(p) ? 'text-emerald-400 bg-emerald-500/10' : 'text-hud-text-muted hover:text-emerald-400 hover:bg-emerald-500/10'} disabled:opacity-30 disabled:cursor-not-allowed`}
+                                                            title={!p.managerName ? '책임자명 없음' : isCustomerSaved(p) ? '고객 등록됨' : '고객 등록'}
+                                                        >
+                                                            {isCustomerSaved(p) ? <UserCheck className="w-4 h-4" /> : <UserPlus className="w-4 h-4" />}
+                                                        </button>
+                                                        <button onClick={() => viewDetail(p)} className="p-1.5 text-hud-text-muted hover:text-hud-accent-info hover:bg-hud-accent-info/10 rounded-lg transition-all" title="상세보기">
+                                                            <Eye className="w-4 h-4" />
+                                                        </button>
+                                                        <button onClick={() => handleEdit(p)} className="p-1.5 text-hud-text-muted hover:text-hud-accent-primary hover:bg-hud-accent-primary/10 rounded-lg transition-all" title="수정">
+                                                            <Pencil className="w-4 h-4" />
+                                                        </button>
+                                                        <button onClick={() => handleDelete(p.id)} className="p-1.5 text-hud-text-muted hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all" title="삭제">
+                                                            <Trash2 className="w-4 h-4" />
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        )
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
+
+                        {/* 모바일: 카드 뷰 */}
+                        <div className="space-y-3 p-3 sm:hidden">
+                            {pagedProperties.map((p) => {
+                                const price = p.contractType === '매매' ? p.totalPrice
+                                    : p.contractType === '전세' ? p.depositAmount
                                         : p.monthlyRent;
 
-                                    return (
-                                        <tr key={p.id} className="border-b border-hud-border-primary/50 hover:bg-hud-bg-hover transition-colors">
-                                            <td className="px-4 py-3">
-                                                <div className="space-y-1">
-                                                    <span className="text-sm font-medium text-hud-text-primary">{p.articleName}</span>
-                                                    {getNotificationBadges(p).length > 0 && (
-                                                        <div className="flex flex-wrap gap-1">
-                                                            {getNotificationBadges(p).map(([key]) => (
-                                                                <span
-                                                                    key={key}
-                                                                    className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] ${getNotificationBadgeClass(key)}`}
-                                                                >
-                                                                    {NOTIFICATION_TYPE_LABELS[key]}
-                                                                </span>
-                                                            ))}
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            </td>
-                                            <td className="px-4 py-3">
-                                                <span className="text-xs px-2 py-1 bg-hud-bg-primary rounded-md text-hud-text-secondary">{p.propertyType || '-'}</span>
-                                            </td>
-                                            <td className="px-4 py-3 text-center">
-                                                <span className={`inline-flex px-2.5 py-1 text-xs font-medium rounded-lg ${p.contractType === '매매' ? 'bg-red-500/15 text-red-400'
-                                                    : p.contractType === '전세' ? 'bg-emerald-500/15 text-emerald-400'
-                                                        : 'bg-amber-500/15 text-amber-400'
-                                                    }`}>{p.contractType}</span>
-                                            </td>
-                                            <td className="px-4 py-3 text-right text-sm font-semibold text-hud-text-primary">{formatPrice(price)}</td>
-                                            <td className="px-4 py-3 text-right text-sm text-hud-text-secondary">{p.monthlyRent ? formatPrice(p.monthlyRent) : '-'}</td>
-                                            <td className="px-4 py-3 text-sm text-hud-text-secondary">{p.managerName || '-'}</td>
-                                            <td className="px-4 py-3 text-sm text-hud-text-secondary">{p.managerPhone || '-'}</td>
-                                            <td className="px-4 py-3">
-                                                <div className="flex items-center justify-end gap-1">
-                                                    <button onClick={() => viewDetail(p)} className="p-1.5 text-hud-text-muted hover:text-hud-accent-info hover:bg-hud-accent-info/10 rounded-lg transition-all" title="상세보기">
-                                                        <Eye className="w-4 h-4" />
-                                                    </button>
-                                                    <button onClick={() => handleEdit(p)} className="p-1.5 text-hud-text-muted hover:text-hud-accent-primary hover:bg-hud-accent-primary/10 rounded-lg transition-all" title="수정">
-                                                        <Pencil className="w-4 h-4" />
-                                                    </button>
-                                                    <button onClick={() => handleDelete(p.id)} className="p-1.5 text-hud-text-muted hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all" title="삭제">
-                                                        <Trash2 className="w-4 h-4" />
-                                                    </button>
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    )
-                                })}
-                            </tbody>
-                        </table>
-                    </div>
-
-                    {/* 모바일: 카드 뷰 */}
-                    <div className="sm:hidden space-y-3">
-                        {properties.map((p) => {
-                            const price = p.contractType === '매매' ? p.totalPrice
-                                : p.contractType === '전세' ? p.depositAmount
-                                : p.monthlyRent;
-
-                            return (
-                                <div key={p.id} className="bg-hud-bg-secondary rounded-xl border border-hud-border-secondary overflow-hidden">
-                                    {/* 헤더: 매물명 + 거래유형 + 버튼 */}
-                                    <div className="flex items-center justify-between gap-3 p-4 border-b border-hud-border-secondary/50">
-                                        <div className="flex-1 min-w-0">
-                                            <h3 className="text-sm font-semibold text-hud-text-primary truncate">{p.articleName}</h3>
-                                            {getNotificationBadges(p).length > 0 && (
-                                                <div className="mt-2 flex flex-wrap gap-1">
-                                                    {getNotificationBadges(p).map(([key]) => (
-                                                        <span
-                                                            key={key}
-                                                            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] ${getNotificationBadgeClass(key)}`}
-                                                        >
-                                                            {NOTIFICATION_TYPE_LABELS[key]}
-                                                        </span>
-                                                    ))}
-                                                </div>
-                                            )}
-                                        </div>
-                                        <span className={`shrink-0 inline-flex px-2 py-1 text-xs font-medium rounded-lg ${p.contractType === '매매' ? 'bg-red-500/15 text-red-400'
-                                            : p.contractType === '전세' ? 'bg-emerald-500/15 text-emerald-400'
-                                                : 'bg-amber-500/15 text-amber-400'
-                                            }`}>{p.contractType}</span>
-                                    </div>
-
-                                    {/* 본문 */}
-                                    <div className="p-4 space-y-3">
-                                        {/* 가격 정보 */}
-                                        <div className="flex items-center justify-between">
-                                            <span className="text-xs text-hud-text-muted">가격</span>
-                                            <span className="text-base font-bold text-hud-text-primary">{formatPrice(price)}</span>
-                                        </div>
-
-                                        {/* 납부 정보 */}
-                                        {(p.downPayment || p.interimPayment || p.finalPayment) && (
-                                            <div className="grid grid-cols-3 gap-2 pt-2 border-t border-hud-border-secondary/30">
-                                                {p.downPayment && (
-                                                    <div className="text-center">
-                                                        <div className="text-xs text-hud-text-muted mb-1">계약금</div>
-                                                        <div className="text-sm font-medium text-hud-text-primary">{formatPrice(p.downPayment)}</div>
-                                                    </div>
-                                                )}
-                                                {p.interimPayment && (
-                                                    <div className="text-center">
-                                                        <div className="text-xs text-hud-text-muted mb-1">중도금</div>
-                                                        <div className="text-sm font-medium text-hud-text-primary">{formatPrice(p.interimPayment)}</div>
-                                                    </div>
-                                                )}
-                                                {p.finalPayment && (
-                                                    <div className="text-center">
-                                                        <div className="text-xs text-hud-text-muted mb-1">잔금</div>
-                                                        <div className="text-sm font-medium text-hud-text-primary">{formatPrice(p.finalPayment)}</div>
+                                return (
+                                    <div key={p.id} className="bg-hud-bg-secondary rounded-xl border border-hud-border-secondary overflow-hidden">
+                                        {/* 헤더: 매물명 + 거래유형 + 버튼 */}
+                                        <div className="flex items-center justify-between gap-3 p-4 border-b border-hud-border-secondary/50">
+                                            <div className="flex-1 min-w-0">
+                                                <h3 className="text-sm font-semibold text-hud-text-primary truncate">{p.articleName}</h3>
+                                                {getNotificationBadges(p).length > 0 && (
+                                                    <div className="mt-2 flex flex-wrap gap-1">
+                                                        {getNotificationBadges(p).map(([key]) => (
+                                                            <span
+                                                                key={key}
+                                                                className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] ${getNotificationBadgeClass(key)}`}
+                                                            >
+                                                                {NOTIFICATION_TYPE_LABELS[key]}
+                                                            </span>
+                                                        ))}
                                                     </div>
                                                 )}
                                             </div>
-                                        )}
-                                    </div>
+                                            <span className={`shrink-0 inline-flex px-2 py-1 text-xs font-medium rounded-lg ${p.contractType === '매매' ? 'bg-red-500/15 text-red-400'
+                                                : p.contractType === '전세' ? 'bg-emerald-500/15 text-emerald-400'
+                                                    : 'bg-amber-500/15 text-amber-400'
+                                                }`}>{p.contractType}</span>
+                                        </div>
 
-                                    {/* 하단: 저장일 + 관리 버튼 */}
-                                    <div className="flex items-center justify-between px-4 py-3 bg-hud-bg-primary/30">
-                                        <span className="text-xs text-hud-text-muted">{formatDate(p.createdAt)}</span>
-                                        <div className="flex items-center gap-1">
-                                            <button onClick={() => viewDetail(p)} className="p-1.5 text-hud-text-muted hover:text-hud-accent-info hover:bg-hud-accent-info/10 rounded-lg transition-all" title="상세보기">
-                                                <Eye className="w-4 h-4" />
-                                            </button>
-                                            <button onClick={() => handleEdit(p)} className="p-1.5 text-hud-text-muted hover:text-hud-accent-primary hover:bg-hud-accent-primary/10 rounded-lg transition-all" title="수정">
-                                                <Pencil className="w-4 h-4" />
-                                            </button>
-                                            <button onClick={() => handleDelete(p.id)} className="p-1.5 text-hud-text-muted hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all" title="삭제">
-                                                <Trash2 className="w-4 h-4" />
-                                            </button>
+                                        {/* 본문 */}
+                                        <div className="p-4 space-y-3">
+                                            {/* 가격 정보 */}
+                                            <div className="flex items-center justify-between">
+                                                <span className="text-xs text-hud-text-muted">가격</span>
+                                                <span className="text-base font-bold text-hud-text-primary">{formatPrice(price)}</span>
+                                            </div>
+
+                                            {/* 납부 정보 */}
+                                            {(p.downPayment || p.interimPayment || p.finalPayment) && (
+                                                <div className="grid grid-cols-3 gap-2 pt-2 border-t border-hud-border-secondary/30">
+                                                    {p.downPayment && (
+                                                        <div className="text-center">
+                                                            <div className="text-xs text-hud-text-muted mb-1">계약금</div>
+                                                            <div className="text-sm font-medium text-hud-text-primary">{formatPrice(p.downPayment)}</div>
+                                                        </div>
+                                                    )}
+                                                    {p.interimPayment && (
+                                                        <div className="text-center">
+                                                            <div className="text-xs text-hud-text-muted mb-1">중도금</div>
+                                                            <div className="text-sm font-medium text-hud-text-primary">{formatPrice(p.interimPayment)}</div>
+                                                        </div>
+                                                    )}
+                                                    {p.finalPayment && (
+                                                        <div className="text-center">
+                                                            <div className="text-xs text-hud-text-muted mb-1">잔금</div>
+                                                            <div className="text-sm font-medium text-hud-text-primary">{formatPrice(p.finalPayment)}</div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        {/* 하단: 저장일 + 관리 버튼 */}
+                                        <div className="flex items-center justify-between px-4 py-3 bg-hud-bg-primary/30">
+                                            <span className="text-xs text-hud-text-muted">{formatDate(p.createdAt)}</span>
+                                            <div className="flex items-center gap-1">
+                                                <button
+                                                    onClick={() => void handleSaveCustomerForProperty(p)}
+                                                    disabled={!!savingPropertyIds[p.id] || !p.managerName}
+                                                    className={`p-1.5 rounded-lg transition-all ${isCustomerSaved(p) ? 'text-emerald-400 bg-emerald-500/10' : 'text-hud-text-muted hover:text-emerald-400 hover:bg-emerald-500/10'} disabled:opacity-30 disabled:cursor-not-allowed`}
+                                                    title={!p.managerName ? '책임자명 없음' : isCustomerSaved(p) ? '고객 등록됨' : '고객 등록'}
+                                                >
+                                                    {isCustomerSaved(p) ? <UserCheck className="w-4 h-4" /> : <UserPlus className="w-4 h-4" />}
+                                                </button>
+                                                <button onClick={() => viewDetail(p)} className="p-1.5 text-hud-text-muted hover:text-hud-accent-info hover:bg-hud-accent-info/10 rounded-lg transition-all" title="상세보기">
+                                                    <Eye className="w-4 h-4" />
+                                                </button>
+                                                <button onClick={() => handleEdit(p)} className="p-1.5 text-hud-text-muted hover:text-hud-accent-primary hover:bg-hud-accent-primary/10 rounded-lg transition-all" title="수정">
+                                                    <Pencil className="w-4 h-4" />
+                                                </button>
+                                                <button onClick={() => handleDelete(p.id)} className="p-1.5 text-hud-text-muted hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all" title="삭제">
+                                                    <Trash2 className="w-4 h-4" />
+                                                </button>
+                                            </div>
                                         </div>
                                     </div>
+                                )
+                            })}
+                        </div>
+
+                        <div className="flex flex-col gap-3 border-t border-hud-border-secondary bg-hud-bg-secondary/25 px-4 py-4 text-sm sm:flex-row sm:items-center sm:justify-between">
+                            <span className="text-hud-text-secondary">
+                                {currentRangeLabel}
+                            </span>
+                            {totalPages > 1 && (
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                    <button
+                                        type="button"
+                                        onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                                        disabled={currentPage === 1}
+                                        className="rounded-md border border-hud-border-secondary px-3 py-1.5 text-hud-text-primary disabled:cursor-not-allowed disabled:opacity-40"
+                                    >
+                                        이전
+                                    </button>
+                                    {visiblePageNumbers.map((pageNumber) => (
+                                        <button
+                                            key={pageNumber}
+                                            type="button"
+                                            onClick={() => setCurrentPage(pageNumber)}
+                                            className={`min-w-[36px] rounded-md border px-3 py-1.5 ${pageNumber === currentPage
+                                                ? 'border-hud-accent-primary/40 bg-hud-accent-primary/10 text-hud-accent-primary'
+                                                : 'border-hud-border-secondary text-hud-text-primary'
+                                                }`}
+                                            aria-current={pageNumber === currentPage ? 'page' : undefined}
+                                        >
+                                            {pageNumber}
+                                        </button>
+                                    ))}
+                                    <button
+                                        type="button"
+                                        onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+                                        disabled={currentPage === totalPages}
+                                        className="rounded-md border border-hud-border-secondary px-3 py-1.5 text-hud-text-primary disabled:cursor-not-allowed disabled:opacity-40"
+                                    >
+                                        다음
+                                    </button>
                                 </div>
-                            )
-                        })}
-                    </div>
-                </>
-            )}
+                            )}
+                        </div>
+                    </>
+                )}
+            </div>
 
             {/* 상세보기 모달 */}
             {showDetailModal && detailProperty && (

@@ -51,6 +51,7 @@ model User {
   favoriteProperties FavoriteProperty[]         /// 관심 매물 목록
   schedules        Schedule[]                  /// 일정 목록
   customerInfos    CustomerInfo[]              /// 고객 정보 목록
+  customerConsultations CustomerConsultation[] /// 고객 상담 기록
 
   @@map("users")
 }
@@ -447,6 +448,7 @@ model CustomerInfo {
 
   // 관계
   user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  customerConsultations CustomerConsultation[]
 
   @@unique([userId, customerKey])
   @@index([userId])
@@ -454,7 +456,33 @@ model CustomerInfo {
 }
 
 // ============================================
-// 14. 관리 매물 (계약 관리)
+// 14. 고객 상담 기록
+// ============================================
+
+model CustomerConsultation {
+  id                  String    @id @default(cuid())    /// 고객 상담 고유 ID
+  userId              String                            /// 사용자 ID
+  customerInfoId      String?                           /// 고객 정보 ID
+  customerName        String                            /// 고객명
+  customerPhone       String?                           /// 연락처
+  content             String    @db.Text                /// 상담 내용
+  consultedAt         DateTime  @default(now())         /// 상담 일시
+  createdAt           DateTime  @default(now())         /// 생성일
+  updatedAt           DateTime  @updatedAt              /// 수정일
+
+  // 관계
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  customerInfo        CustomerInfo? @relation(fields: [customerInfoId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([customerInfoId])
+  @@index([consultedAt])
+  @@index([customerName])
+  @@map("customer_consultations")
+}
+
+// ============================================
+// 15. 관리 매물 (계약 관리)
 // ============================================
 
 model ManagedProperty {
@@ -519,7 +547,7 @@ model ManagedProperty {
 }
 
 // ============================================
-// 15. 관심 매물 (독립 - 네이버 데이터 무관)
+// 16. 관심 매물 (독립 - 네이버 데이터 무관)
 // ============================================
 
 model FavoriteProperty {
@@ -547,7 +575,7 @@ model FavoriteProperty {
 }
 
 // ============================================
-// 15. 일정 관리
+// 17. 일정 관리
 // ============================================
 
 model Schedule {

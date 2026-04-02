@@ -183,6 +183,139 @@ function compareContractDateDesc(
   return bTime - aTime;
 }
 
+async function syncCustomerInfoForUser(userId: string) {
+  // 1. 저장된 고객 목록 조회
+  const customerInfos = await prisma.customerInfo.findMany({
+    where: { userId },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  // 2. 모든 관리매물 조회
+  const properties = await prisma.managedProperty.findMany({
+    where: { userId },
+    orderBy: { contractDate: 'desc' },
+  });
+
+  // 3. 매물을 customerKey 기준으로 그룹핑
+  const propertyByKeyMap = new Map<string, typeof properties>();
+  for (const property of properties) {
+    const resolved = resolveCustomerInfoFromManagedProperty(property);
+    if (!resolved) continue;
+    const existing = propertyByKeyMap.get(resolved.customerKey) || [];
+    propertyByKeyMap.set(resolved.customerKey, [...existing, property]);
+  }
+
+  // 4. 각 저장된 고객에 대해 매칭되는 매물 정보 연결
+  const customers = customerInfos.map((ci) => {
+    const matchedProperties = propertyByKeyMap.get(ci.customerKey) || [];
+    const contracts = matchedProperties.map((p) => ({
+      id: p.id,
+      articleName: p.articleName,
+      buildingName: p.buildingName,
+      address: p.address,
+      contractType: p.contractType,
+      propertyType: p.propertyType,
+      contractDate: p.contractDate,
+      contractEndDate: p.contractEndDate,
+      tenantName: p.tenantName,
+      tenantPhone: p.tenantPhone,
+      notes: p.notes,
+      updatedAt: p.updatedAt,
+    }));
+
+    return {
+      id: ci.id,
+      key: ci.customerKey,
+      customerName: ci.customerName,
+      customerPhone: ci.customerPhone,
+      memo: ci.memo || null,
+      createdAt: ci.createdAt,
+      updatedAt: ci.updatedAt,
+      contractCount: contracts.length,
+      contracts,
+    };
+  });
+
+  return {
+    customers,
+    syncedCustomerCount: customers.length,
+    createdCustomerCount: 0,
+    skippedPropertyCount: 0,
+    sourcePropertyCount: properties.length,
+  };
+}
+
+async function saveCustomerInfoForProperty(userId: string, managedPropertyId: string) {
+  const property = await prisma.managedProperty.findFirst({
+    where: { id: managedPropertyId, userId },
+  });
+
+  if (!property) {
+    throw new Error('관리매물을 찾을 수 없습니다.');
+  }
+
+  const resolvedCustomer = resolveCustomerInfoFromManagedProperty(property);
+  if (!resolvedCustomer) {
+    throw new Error('책임자명이 없어 고객정보를 저장할 수 없습니다.');
+  }
+
+  // 고객 단위로 upsert (같은 이름+전화번호면 기존 고객 재사용)
+  const customerInfo = await prisma.customerInfo.upsert({
+    where: {
+      userId_customerKey: {
+        userId,
+        customerKey: resolvedCustomer.customerKey,
+      },
+    },
+    update: {
+      customerName: resolvedCustomer.customerName,
+      customerPhone: resolvedCustomer.customerPhone,
+    },
+    create: {
+      userId,
+      customerKey: resolvedCustomer.customerKey,
+      customerName: resolvedCustomer.customerName,
+      customerPhone: resolvedCustomer.customerPhone,
+    },
+  });
+
+  return customerInfo;
+}
+
+async function upsertCustomerInfoForConsultation(
+  userId: string,
+  customerName: string,
+  customerPhone?: string | null
+) {
+  const trimmedName = customerName.trim();
+  if (!trimmedName) {
+    throw new Error('고객명은 비워둘 수 없습니다.');
+  }
+
+  const trimmedPhone = typeof customerPhone === 'string' && customerPhone.trim()
+    ? customerPhone.trim()
+    : null;
+
+  return prisma.customerInfo.upsert({
+    where: {
+      userId_customerKey: {
+        userId,
+        customerKey: buildCustomerInfoKey(trimmedName, trimmedPhone),
+      },
+    },
+    update: {
+      customerName: trimmedName,
+      customerPhone: trimmedPhone,
+    },
+    create: {
+      userId,
+      customerKey: buildCustomerInfoKey(trimmedName, trimmedPhone),
+      customerName: trimmedName,
+      customerPhone: trimmedPhone,
+    },
+  });
+}
+
 /**
  * GET /api/public/reb/tables
  * 한국부동산원 통계표 목록 조회
@@ -5044,6 +5177,75 @@ app.delete('/api/favorite-properties/:id', async (c) => {
   }
 });
 
+app.post('/api/favorite-properties/:id/convert-to-managed', async (c) => {
+  try {
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
+
+    const id = c.req.param('id');
+    const body = await c.req.json();
+    const favoriteProperty = await prisma.favoriteProperty.findFirst({
+      where: { id, userId },
+    });
+
+    if (!favoriteProperty) {
+      return c.json({ error: '관심매물을 찾을 수 없습니다.' }, 404);
+    }
+
+    if (!body.articleName || !body.contractType || !body.contractDate || !body.contractEndDate) {
+      return c.json({ error: '매물명, 거래유형, 계약시작일, 계약만료일은 필수입니다' }, 400);
+    }
+
+    const parsedPropertyId = body.propertyId === undefined || body.propertyId === null || body.propertyId === ''
+      ? null
+      : Number(body.propertyId);
+
+    const managedProperty = await prisma.$transaction(async (tx) => {
+      const created = await tx.managedProperty.create({
+        data: {
+          userId,
+          articleName: body.articleName,
+          buildingName: body.buildingName || null,
+          address: body.address || null,
+          propertyId: Number.isNaN(parsedPropertyId) ? null : parsedPropertyId,
+          contractType: body.contractType,
+          propertyType: body.propertyType || null,
+          downPayment: body.downPayment ?? null,
+          downPaymentDate: body.downPaymentDate ? new Date(body.downPaymentDate) : null,
+          interimPayment: body.interimPayment ?? null,
+          interimPaymentDate: body.interimPaymentDate ? new Date(body.interimPaymentDate) : null,
+          finalPayment: body.finalPayment ?? null,
+          finalPaymentDate: body.finalPaymentDate ? new Date(body.finalPaymentDate) : null,
+          contractDate: new Date(body.contractDate),
+          contractEndDate: new Date(body.contractEndDate),
+          totalPrice: body.totalPrice ?? null,
+          depositAmount: body.depositAmount ?? null,
+          monthlyRent: body.monthlyRent ?? null,
+          tenantName: body.tenantName || null,
+          tenantPhone: body.tenantPhone || null,
+          managerName: body.managerName || null,
+          managerPhone: body.managerPhone || null,
+          notes: body.notes ?? favoriteProperty.notes ?? null,
+          status: body.status || 'active',
+        },
+      });
+
+      await tx.favoriteProperty.deleteMany({
+        where: { id, userId },
+      });
+
+      return created;
+    });
+
+    return c.json({ success: true, property: managedProperty });
+  } catch (error) {
+    console.error('Favorite property convert error:', error);
+    return c.json({ error: error instanceof Error ? error.message : 'Failed to convert favorite property' }, 500);
+  }
+});
+
 // ============================================
 // 관리 매물 API (계약 관리)
 // ============================================
@@ -5059,95 +5261,59 @@ app.get('/api/customer-info', async (c) => {
       return c.json({ error: '인증이 필요합니다.' }, 401);
     }
 
-    const properties = await prisma.managedProperty.findMany({
-      where: { userId },
-      orderBy: { contractDate: 'desc' },
-    });
-
-    const contractGroupMap = new Map<string, typeof properties>();
-    const customerMetaMap = new Map<string, {
-      customerKey: string;
-      customerName: string;
-      customerPhone: string | null;
-    }>();
-
-    for (const property of properties) {
-      const resolvedCustomer = resolveCustomerInfoFromManagedProperty(property);
-      if (!resolvedCustomer) continue;
-
-      const existingContracts = contractGroupMap.get(resolvedCustomer.customerKey) || [];
-      contractGroupMap.set(resolvedCustomer.customerKey, existingContracts.concat(property));
-
-      if (!customerMetaMap.has(resolvedCustomer.customerKey)) {
-        customerMetaMap.set(resolvedCustomer.customerKey, resolvedCustomer);
-      }
-    }
-
-    const customerKeys = Array.from(customerMetaMap.keys());
-
-    if (customerKeys.length === 0) {
-      return c.json({ success: true, customers: [] });
-    }
-
-    let customerInfos = await prisma.customerInfo.findMany({
-      where: {
-        userId,
-        customerKey: { in: customerKeys },
-      },
-    });
-
-    const existingKeySet = new Set(customerInfos.map((customerInfo) => customerInfo.customerKey));
-    const missingCustomerInfos = customerKeys
-      .map((customerKey) => customerMetaMap.get(customerKey)!)
-      .filter((customerMeta) => !existingKeySet.has(customerMeta.customerKey));
-
-    if (missingCustomerInfos.length > 0) {
-      await prisma.customerInfo.createMany({
-        data: missingCustomerInfos.map((customerMeta) => ({
-          userId,
-          customerKey: customerMeta.customerKey,
-          customerName: customerMeta.customerName,
-          customerPhone: customerMeta.customerPhone,
-        })),
-        skipDuplicates: true,
-      });
-
-      customerInfos = await prisma.customerInfo.findMany({
-        where: {
-          userId,
-          customerKey: { in: customerKeys },
-        },
-      });
-    }
-
-    const customerInfoMap = new Map(
-      customerInfos.map((customerInfo) => [customerInfo.customerKey, customerInfo])
-    );
-
-    const customers = Array.from(contractGroupMap.entries())
-      .map(([customerKey, contracts]) => {
-        const customerInfo = customerInfoMap.get(customerKey);
-        const customerMeta = customerMetaMap.get(customerKey)!;
-        const sortedContracts = [...contracts].sort(compareContractDateDesc);
-
-        return {
-          id: customerInfo?.id || customerKey,
-          key: customerKey,
-          customerName: customerInfo?.customerName || customerMeta.customerName,
-          customerPhone: customerInfo?.customerPhone ?? customerMeta.customerPhone,
-          memo: customerInfo?.memo || null,
-          createdAt: customerInfo?.createdAt || null,
-          updatedAt: customerInfo?.updatedAt || null,
-          contractCount: sortedContracts.length,
-          contracts: sortedContracts,
-        };
-      })
-      .sort((a, b) => compareContractDateDesc(a.contracts[0], b.contracts[0]));
-
-    return c.json({ success: true, customers });
+    const result = await syncCustomerInfoForUser(userId);
+    return c.json({ success: true, customers: result.customers });
   } catch (error) {
     console.error('Customer info fetch error:', error);
     return c.json({ error: error instanceof Error ? error.message : 'Failed to fetch customer info' }, 500);
+  }
+});
+
+/**
+ * GET /api/customer-info/saved-customer-keys
+ * 등록된 고객의 customerKey 목록 조회
+ */
+app.get('/api/customer-info/saved-customer-keys', async (c) => {
+  try {
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
+
+    const customerInfos = await prisma.customerInfo.findMany({
+      where: { userId },
+      select: { customerKey: true },
+    });
+
+    const customerKeys = customerInfos.map((ci) => ci.customerKey);
+    return c.json({ success: true, customerKeys });
+  } catch (error) {
+    console.error('Customer info saved keys fetch error:', error);
+    return c.json({ error: error instanceof Error ? error.message : 'Failed to fetch' }, 500);
+  }
+});
+
+/**
+ * POST /api/customer-info/save-property/:propertyId
+ * 특정 관리매물의 책임자를 고객으로 등록
+ */
+app.post('/api/customer-info/save-property/:propertyId', async (c) => {
+  try {
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
+
+    const propertyId = c.req.param('propertyId');
+    const customerInfo = await saveCustomerInfoForProperty(userId, propertyId);
+
+    return c.json({
+      success: true,
+      customerInfo,
+    });
+  } catch (error) {
+    console.error('Customer info save error:', error);
+    return c.json({ error: error instanceof Error ? error.message : 'Failed to save customer info' }, 500);
   }
 });
 
@@ -5222,6 +5388,183 @@ app.put('/api/customer-info/:id', async (c) => {
   } catch (error) {
     console.error('Customer info update error:', error);
     return c.json({ error: error instanceof Error ? error.message : 'Failed to update customer info' }, 500);
+  }
+});
+
+/**
+ * DELETE /api/customer-info/:id
+ * 고객 정보 삭제
+ */
+app.delete('/api/customer-info/:id', async (c) => {
+  try {
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
+
+    const id = c.req.param('id');
+    const result = await prisma.customerInfo.deleteMany({
+      where: { id, userId },
+    });
+
+    if (result.count === 0) {
+      return c.json({ error: '고객 정보를 찾을 수 없습니다.' }, 404);
+    }
+
+    return c.json({ success: true, message: 'Deleted' });
+  } catch (error) {
+    console.error('Customer info delete error:', error);
+    return c.json({ error: error instanceof Error ? error.message : 'Failed to delete customer info' }, 500);
+  }
+});
+
+/**
+ * GET /api/customer-consultations
+ * 고객 상담 기록 조회
+ */
+app.get('/api/customer-consultations', async (c) => {
+  try {
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
+
+    const consultations = await prisma.customerConsultation.findMany({
+      where: { userId },
+      orderBy: [{ consultedAt: 'desc' }, { createdAt: 'desc' }],
+    });
+
+    return c.json({ success: true, consultations });
+  } catch (error) {
+    console.error('Customer consultations fetch error:', error);
+    return c.json({ error: error instanceof Error ? error.message : 'Failed to fetch customer consultations' }, 500);
+  }
+});
+
+/**
+ * POST /api/customer-consultations
+ * 고객 상담 기록 등록
+ */
+app.post('/api/customer-consultations', async (c) => {
+  try {
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const requestedCustomerInfoId = typeof body.customerInfoId === 'string' && body.customerInfoId.trim()
+      ? body.customerInfoId.trim()
+      : null;
+    const requestedCustomerName = typeof body.customerName === 'string' ? body.customerName.trim() : '';
+    const requestedCustomerPhone = typeof body.customerPhone === 'string' && body.customerPhone.trim()
+      ? body.customerPhone.trim()
+      : null;
+    const content = typeof body.content === 'string' ? body.content.trim() : '';
+
+    if (!content) {
+      return c.json({ error: '상담 내용을 입력해야 합니다.' }, 400);
+    }
+
+    let customerInfo = null;
+    if (requestedCustomerInfoId) {
+      customerInfo = await prisma.customerInfo.findFirst({
+        where: { id: requestedCustomerInfoId, userId },
+      });
+
+      if (!customerInfo) {
+        return c.json({ error: '선택한 고객 정보를 찾을 수 없습니다.' }, 404);
+      }
+    }
+
+    const customerName = customerInfo?.customerName || requestedCustomerName;
+    const customerPhone = requestedCustomerPhone ?? customerInfo?.customerPhone ?? null;
+
+    if (!customerName) {
+      return c.json({ error: '고객명을 입력해야 합니다.' }, 400);
+    }
+
+    const resolvedCustomerInfo = await upsertCustomerInfoForConsultation(userId, customerName, customerPhone);
+    const consultation = await prisma.customerConsultation.create({
+      data: {
+        userId,
+        customerInfoId: resolvedCustomerInfo.id,
+        customerName: resolvedCustomerInfo.customerName,
+        customerPhone: resolvedCustomerInfo.customerPhone,
+        content,
+      },
+    });
+
+    return c.json({ success: true, consultation });
+  } catch (error) {
+    console.error('Customer consultation create error:', error);
+    return c.json({ error: error instanceof Error ? error.message : 'Failed to create customer consultation' }, 500);
+  }
+});
+
+/**
+ * PUT /api/customer-consultations/:id
+ * 고객 상담 기록 수정
+ */
+app.put('/api/customer-consultations/:id', async (c) => {
+  try {
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
+
+    const id = c.req.param('id');
+    const body = await c.req.json().catch(() => ({}));
+    const content = typeof body.content === 'string' ? body.content.trim() : '';
+
+    if (!content) {
+      return c.json({ error: '상담 내용을 입력해야 합니다.' }, 400);
+    }
+
+    const currentConsultation = await prisma.customerConsultation.findFirst({
+      where: { id, userId },
+    });
+
+    if (!currentConsultation) {
+      return c.json({ error: '상담 기록을 찾을 수 없습니다.' }, 404);
+    }
+
+    const consultation = await prisma.customerConsultation.update({
+      where: { id: currentConsultation.id },
+      data: { content },
+    });
+
+    return c.json({ success: true, consultation });
+  } catch (error) {
+    console.error('Customer consultation update error:', error);
+    return c.json({ error: error instanceof Error ? error.message : 'Failed to update customer consultation' }, 500);
+  }
+});
+
+/**
+ * DELETE /api/customer-consultations/:id
+ * 고객 상담 기록 삭제
+ */
+app.delete('/api/customer-consultations/:id', async (c) => {
+  try {
+    const userId = await getUserIdFromRequest(c);
+    if (!userId) {
+      return c.json({ error: '인증이 필요합니다.' }, 401);
+    }
+
+    const id = c.req.param('id');
+    const result = await prisma.customerConsultation.deleteMany({
+      where: { id, userId },
+    });
+
+    if (result.count === 0) {
+      return c.json({ error: '상담 기록을 찾을 수 없습니다.' }, 404);
+    }
+
+    return c.json({ success: true, message: 'Deleted' });
+  } catch (error) {
+    console.error('Customer consultation delete error:', error);
+    return c.json({ error: error instanceof Error ? error.message : 'Failed to delete customer consultation' }, 500);
   }
 });
 

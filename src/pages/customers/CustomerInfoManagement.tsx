@@ -1,11 +1,14 @@
-import { Fragment, useDeferredValue, useEffect, useMemo, useState } from 'react'
+import { Fragment, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
     AlertTriangle,
     ClipboardList,
+    MessageSquareText,
     Phone,
     RefreshCw,
     Search,
     Sparkles,
+    Trash2,
     X,
 } from 'lucide-react'
 import Button from '../../components/common/Button'
@@ -89,6 +92,18 @@ function formatArticleDisplay(contract: Pick<CustomerContract, 'articleName' | '
     return `${contract.articleName} / ${suffixParts.join(' · ')}`
 }
 
+function getContractPreviewMeta(contracts: CustomerContract[], limit = 2) {
+    const previewItems = contracts.slice(0, limit).map((contract) => ({
+        id: contract.id,
+        label: formatArticleDisplay(contract),
+    }))
+
+    return {
+        previewItems,
+        remainingCount: Math.max(0, contracts.length - previewItems.length),
+    }
+}
+
 function getVisiblePageNumbers(currentPage: number, totalPages: number) {
     const maxVisiblePages = 5
 
@@ -108,6 +123,7 @@ function getVisiblePageNumbers(currentPage: number, totalPages: number) {
 
 export default function CustomerInfoManagement() {
     const authFetch = useAuthStore((state) => state.authFetch)
+    const navigate = useNavigate()
     const [customers, setCustomers] = useState<CustomerInfoItem[]>([])
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
@@ -117,6 +133,9 @@ export default function CustomerInfoManagement() {
     const [memoDrafts, setMemoDrafts] = useState<Record<string, string>>({})
     const [memoErrors, setMemoErrors] = useState<Record<string, string | null>>({})
     const [savingMemoIds, setSavingMemoIds] = useState<Record<string, boolean>>({})
+    const [deletingCustomerIds, setDeletingCustomerIds] = useState<Record<string, boolean>>({})
+    const [editingMemoId, setEditingMemoId] = useState<string | null>(null)
+    const memoFieldRefs = useRef<Record<string, HTMLTextAreaElement | null>>({})
 
     const fetchCustomerInfo = async () => {
         try {
@@ -139,6 +158,7 @@ export default function CustomerInfoManagement() {
                 }, {}),
             )
             setMemoErrors({})
+            setEditingMemoId(null)
         } catch (err) {
             console.error('Failed to fetch customer info:', err)
             setError(err instanceof Error ? err.message : '고객 정보를 불러오지 못했습니다.')
@@ -224,19 +244,35 @@ export default function CustomerInfoManagement() {
         }))
     }
 
-    const handleMemoReset = (customer: CustomerInfoItem) => {
-        setMemoDrafts((prev) => ({
-            ...prev,
-            [customer.id]: customer.memo || '',
-        }))
+    const activateMemoField = (customerId: string) => {
+        if (savingMemoIds[customerId] || deletingCustomerIds[customerId]) return
+
+        setEditingMemoId(customerId)
         setMemoErrors((prev) => ({
             ...prev,
-            [customer.id]: null,
+            [customerId]: null,
         }))
+
+        if (typeof window !== 'undefined') {
+            window.requestAnimationFrame(() => {
+                const field = memoFieldRefs.current[customerId]
+                if (!field) return
+                field.focus()
+                const cursor = field.value.length
+                field.setSelectionRange(cursor, cursor)
+            })
+        }
     }
 
-    const handleMemoSave = async (customer: CustomerInfoItem) => {
-        const nextMemo = memoDrafts[customer.id] ?? ''
+    const handleMemoSave = async (customer: CustomerInfoItem, nextMemoOverride?: string) => {
+        const nextMemo = nextMemoOverride ?? memoDrafts[customer.id] ?? ''
+        if (nextMemo === (customer.memo || '')) {
+            setMemoErrors((prev) => ({
+                ...prev,
+                [customer.id]: null,
+            }))
+            return
+        }
 
         try {
             setSavingMemoIds((prev) => ({
@@ -297,91 +333,144 @@ export default function CustomerInfoManagement() {
         }
     }
 
-    const renderMemoEditor = (customer: CustomerInfoItem, compact = false) => {
+    const handleMemoBlur = (customer: CustomerInfoItem) => {
+        if (editingMemoId === customer.id) {
+            setEditingMemoId(null)
+        }
+
+        const nextMemo = memoDrafts[customer.id] ?? ''
+        if (nextMemo === (customer.memo || '')) return
+
+        void handleMemoSave(customer, nextMemo)
+    }
+
+    const handleDeleteCustomer = async (customer: CustomerInfoItem) => {
+        const confirmed = confirm(`"${customer.customerName}" 고객정보를 삭제하시겠습니까?\n관리매물 자체는 삭제되지 않습니다.`)
+        if (!confirmed) return
+
+        try {
+            setDeletingCustomerIds((prev) => ({
+                ...prev,
+                [customer.id]: true,
+            }))
+            setMemoErrors((prev) => ({
+                ...prev,
+                [customer.id]: null,
+            }))
+
+            const response = await authFetch(`${API_BASE}/api/customer-info/${customer.id}`, {
+                method: 'DELETE',
+            })
+
+            if (!response.ok) {
+                const data = await response.json().catch(() => ({}))
+                throw new Error(data.error || '고객정보를 삭제하지 못했습니다.')
+            }
+
+            setCustomers((prev) => prev.filter((item) => item.id !== customer.id))
+            setMemoDrafts((prev) => {
+                const next = { ...prev }
+                delete next[customer.id]
+                return next
+            })
+            setMemoErrors((prev) => {
+                const next = { ...prev }
+                delete next[customer.id]
+                return next
+            })
+            setSavingMemoIds((prev) => {
+                const next = { ...prev }
+                delete next[customer.id]
+                return next
+            })
+        } catch (err) {
+            setMemoErrors((prev) => ({
+                ...prev,
+                [customer.id]: err instanceof Error ? err.message : '고객정보를 삭제하지 못했습니다.',
+            }))
+        } finally {
+            setDeletingCustomerIds((prev) => ({
+                ...prev,
+                [customer.id]: false,
+            }))
+        }
+    }
+
+    const goToCustomerConsultation = (customer: CustomerInfoItem) => {
+        navigate(`/customers/consultations?customerId=${customer.id}`)
+    }
+
+    const renderInlineMemoField = (customer: CustomerInfoItem, compact = false) => {
         const memoDraft = memoDrafts[customer.id] ?? ''
         const currentMemo = customer.memo || ''
-        const isMemoDirty = memoDraft !== currentMemo
+        const isEditingMemo = editingMemoId === customer.id
         const isSavingMemo = Boolean(savingMemoIds[customer.id])
+        const isDeletingCustomer = Boolean(deletingCustomerIds[customer.id])
         const hasMemo = Boolean(currentMemo.trim())
-        const memoStateClass = isMemoDirty
-            ? 'border-hud-accent-warning/30 bg-hud-accent-warning/10 text-hud-accent-warning'
-            : hasMemo
-                ? 'border-hud-accent-primary/30 bg-hud-accent-primary/10 text-hud-accent-primary'
-                : 'border-hud-border-secondary bg-hud-bg-secondary/70 text-hud-text-secondary'
-        const memoStateLabel = isMemoDirty ? '저장 전 변경' : hasMemo ? '메모 저장됨' : '메모 없음'
+        const helperLabel = isSavingMemo
+            ? '메모 저장 중...'
+            : isEditingMemo
+                ? '바깥을 클릭하면 메모가 저장됩니다.'
+                : '클릭해서 메모를 바로 수정하세요.'
 
         return (
-            <div
-                className={`overflow-hidden rounded-[var(--hud-base-border-radius)] border border-hud-border-secondary bg-hud-bg-card backdrop-blur-sm ${
-                    compact ? 'p-3' : 'p-4'
-                }`}
-                style={{
-                    background: 'linear-gradient(135deg, rgba(var(--hud-accent-primary-rgb, 0, 255, 204), 0.10) 0%, rgba(var(--hud-accent-primary-rgb, 0, 255, 204), 0.03) 24%, var(--hud-bg-card) 60%)',
-                }}
-            >
-                <div className={`mb-3 flex ${compact ? 'flex-col' : 'flex-col lg:flex-row lg:items-start lg:justify-between'} gap-3`}>
-                    <div className="space-y-2">
-                        <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-[11px] font-semibold tracking-[0.08em] text-hud-text-secondary">고객 메모</span>
-                            <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${memoStateClass}`}>
-                                {memoStateLabel}
-                            </span>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2 text-xs text-hud-text-secondary">
-                            <span className="rounded-full border border-hud-border-secondary bg-hud-bg-secondary/70 px-2 py-0.5">
-                                등록일 {formatDate(customer.createdAt)}
-                            </span>
-                            <span className="rounded-full border border-hud-border-secondary bg-hud-bg-secondary/70 px-2 py-0.5">
-                                수정일 {formatDateTime(customer.updatedAt)}
-                            </span>
-                        </div>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                        <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleMemoReset(customer)}
-                            disabled={!isMemoDirty || isSavingMemo}
-                            className="border border-hud-border-secondary bg-hud-bg-secondary/60"
-                        >
-                            초기화
-                        </Button>
-                        <Button
-                            type="button"
-                            size="sm"
-                            onClick={() => void handleMemoSave(customer)}
-                            disabled={!isMemoDirty || isSavingMemo}
-                            glow={isMemoDirty}
-                        >
-                            {isSavingMemo ? '저장 중...' : '메모 저장'}
-                        </Button>
-                    </div>
-                </div>
+            <div className={`space-y-2 ${compact ? '' : 'max-w-sm'}`}>
                 <textarea
+                    ref={(element) => { memoFieldRefs.current[customer.id] = element }}
                     value={memoDraft}
+                    readOnly={!isEditingMemo}
+                    onClick={() => {
+                        if (!isEditingMemo) {
+                            activateMemoField(customer.id)
+                        }
+                    }}
                     onChange={(e) => handleMemoChange(customer.id, e.target.value)}
-                    rows={compact ? 4 : 3}
+                    onBlur={() => handleMemoBlur(customer)}
+                    rows={compact ? 3 : 2}
                     placeholder="고객 메모를 입력하세요."
-                    className="w-full rounded-xl border border-hud-border-secondary bg-hud-bg-secondary/85 px-3 py-2.5 text-sm text-hud-text-primary placeholder-hud-text-secondary focus:outline-none focus:ring-2 focus:ring-hud-accent-primary/20"
+                    className={`w-full resize-none border-green-700 rounded-xl border px-3 py-2.5 text-sm transition-hud focus:outline-none focus:ring-2 focus:ring-hud-accent-primary/20 ${isEditingMemo
+                        ? 'border-hud-accent-primary/30 bg-hud-bg-card text-hud-text-primary'
+                        : 'cursor-text border-hud-border-secondary bg-hud-bg-secondary/75 text-hud-text-secondary'
+                        } ${isSavingMemo || isDeletingCustomer ? 'opacity-70' : ''}`}
                 />
+                <p className="text-[11px] text-hud-text-secondary">{helperLabel}</p>
                 {memoErrors[customer.id] && (
-                    <p className="mt-2 text-sm text-hud-accent-danger">{memoErrors[customer.id]}</p>
+                    <p className="text-sm text-hud-accent-danger">{memoErrors[customer.id]}</p>
                 )}
             </div>
         )
     }
 
-    const renderDesktopContractsTable = (customer: CustomerInfoItem) => (
-        <div className="overflow-hidden rounded-[var(--hud-base-border-radius)] border border-hud-border-secondary bg-hud-bg-card backdrop-blur-sm">
-            <div className="flex items-center justify-between border-b border-hud-border-secondary px-4 py-3">
-                <div>
-                    <p className="text-[11px] font-semibold tracking-[0.08em] text-hud-text-secondary">등록 매물</p>
-                    <p className="mt-1 text-sm font-medium text-hud-text-primary">{customer.contractCount}건 연결됨</p>
+    const renderConsultationPanel = (customer: CustomerInfoItem, compact = false) => {
+        const contractPreviewMeta = getContractPreviewMeta(customer.contracts, compact ? 2 : 3)
+
+        return (
+            <div
+                className={`overflow-hidden rounded-[var(--hud-base-border-radius)] border border-hud-border-primary/30 bg-hud-bg-card shadow-hud backdrop-blur-sm ${compact ? 'p-3' : 'p-4'
+                    }`}
+                style={{
+                    background: 'linear-gradient(135deg, rgba(var(--hud-accent-primary-rgb, 0, 255, 204), 0.10) 0%, rgba(var(--hud-accent-primary-rgb, 0, 255, 204), 0.03) 24%, var(--hud-bg-card) 60%)',
+                }}
+            >
+                <div className="border-b border-hud-border-secondary pb-3">
+                    <div className="space-y-2">
+                        <h3 className="mt-1 text-sm font-semibold text-hud-text-primary">고객상담</h3>
+                        <p className="text-xs leading-5 text-hud-text-secondary">최신 고객상담 컨텐츠 영역입니다.</p>
+                        <div className="flex flex-wrap items-center gap-2 text-xs text-hud-text-secondary">
+                            <span className="rounded-full border border-hud-border-secondary bg-hud-bg-secondary/70 px-2 py-0.5">
+                                등록일 {formatDate(customer.createdAt)}
+                            </span>
+                        </div>
+                    </div>
                 </div>
-                <span className="rounded-full border border-hud-accent-primary/20 bg-hud-accent-primary/10 px-3 py-1 text-xs font-medium text-hud-accent-primary">
-                    매물 이력
-                </span>
+            </div>
+        )
+    }
+
+    const renderDesktopContractsTable = (customer: CustomerInfoItem) => (
+        <div className="overflow-hidden rounded-[var(--hud-base-border-radius)] border border-hud-border-primary/30 bg-hud-bg-card shadow-hud backdrop-blur-sm">
+            <div className="flex items-center justify-between border-b border-hud-border-secondary px-4 py-3">
+                <h3 className="text-sm font-semibold text-hud-text-primary">매물 이력</h3>
             </div>
             <div className="overflow-x-auto">
                 <table className="min-w-[980px] w-full divide-y divide-hud-border-secondary">
@@ -400,9 +489,8 @@ export default function CustomerInfoManagement() {
                         {customer.contracts.map((contract, contractIndex) => (
                             <tr
                                 key={contract.id}
-                                className={`transition-colors hover:bg-hud-bg-hover/25 ${
-                                    contractIndex % 2 === 0 ? 'bg-hud-bg-primary/80' : 'bg-hud-bg-secondary/10'
-                                }`}
+                                className={`transition-colors hover:bg-hud-bg-hover/25 ${contractIndex % 2 === 0 ? 'bg-hud-bg-primary/80' : 'bg-hud-bg-secondary/10'
+                                    }`}
                             >
                                 <td className="px-4 py-3 align-top">
                                     <p className="text-sm font-semibold text-hud-text-primary">
@@ -469,7 +557,7 @@ export default function CustomerInfoManagement() {
                             {contract.contractType}
                         </span>
                     </div>
-                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    <div className="mt-2 grid gap-2 sm:grid-cols-2">
                         <div className="rounded-xl bg-hud-bg-secondary/80 px-3 py-2">
                             <p className="text-[11px] font-semibold tracking-[0.08em] text-hud-text-secondary">임차/매수인</p>
                             <p className="mt-1 text-sm text-hud-text-primary">{contract.tenantName || '-'}</p>
@@ -510,7 +598,7 @@ export default function CustomerInfoManagement() {
             />
 
             <div className="relative space-y-4">
-                <div className="hud-card hud-card-bottom overflow-hidden px-4 py-4 sm:px-5 sm:py-5">
+                <div className="hud-card hud-card-bottom overflow-hidden border-hud-border-primary/35 px-4 py-4 sm:px-5 sm:py-5">
                     <div
                         className="pointer-events-none absolute inset-0"
                         style={{
@@ -527,7 +615,7 @@ export default function CustomerInfoManagement() {
                                 <div>
                                     <h1 className="text-2xl font-bold text-hud-text-primary sm:text-3xl">고객정보관리</h1>
                                     <p className="mt-2 text-sm leading-6 text-hud-text-secondary sm:text-base">
-                                        관리매물에서 책임자 기준 고객을 자동으로 연결하고, 고객 메모를 이 화면에서 바로 관리합니다.
+                                        관리매물에서 저장한 책임자 기준 고객과 연결 매물을 한 화면에서 보고, 고객 메모를 간단히 수정하며 상담 연동을 준비합니다.
                                     </p>
                                 </div>
                             </div>
@@ -545,7 +633,7 @@ export default function CustomerInfoManagement() {
                             </div>
                         </div>
 
-                        <div className="rounded-[var(--hud-base-border-radius)] border border-hud-border-secondary bg-hud-bg-card/80 p-3 backdrop-blur-sm sm:p-4">
+                        <div className="rounded-[var(--hud-base-border-radius)] border border-hud-border-primary/25 bg-hud-bg-card/80 p-3 shadow-hud backdrop-blur-sm sm:p-4">
                             <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
                                 <div className="min-w-0 flex-1 space-y-1.5">
                                     <label className="block text-[11px] font-semibold tracking-[0.08em] text-hud-text-secondary">통합 검색</label>
@@ -611,67 +699,57 @@ export default function CustomerInfoManagement() {
                     </div>
                     <p className="text-base font-semibold text-hud-text-primary">표시할 고객 정보가 없습니다.</p>
                     <p className="mt-2 text-sm text-hud-text-secondary">
-                        관리매물에 책임자명이 입력된 건만 고객정보에 등록됩니다.
+                        관리매물에 책임자명을 입력한 뒤 관리매물 페이지에서 고객정보 저장을 실행하면 여기서 확인할 수 있습니다.
                     </p>
                 </div>
             ) : (
-                <div className="hud-card hud-card-bottom overflow-hidden">
-                    <div className="border-b border-hud-border-secondary px-4 py-4 sm:px-5">
+                <div className="hud-card hud-card-bottom overflow-hidden border-hud-border-primary/35">
+                    <div className="border-b border-hud-border-secondary bg-hud-bg-secondary/35 px-4 py-4 sm:px-5">
                         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                             <div>
                                 <p className="text-[11px] font-semibold tracking-[0.08em] text-hud-text-secondary">CUSTOMER VIEW</p>
                                 <h2 className="mt-1 text-lg font-semibold text-hud-text-primary">고객 목록</h2>
                             </div>
-                            <div className="flex flex-wrap items-center gap-2 text-xs">
-                                <span className="rounded-full border border-hud-border-secondary bg-hud-bg-secondary/80 px-3 py-1.5 font-medium text-hud-text-primary">
-                                    {currentRangeStart}-{currentRangeEnd} / {filteredCustomers.length}명
-                                </span>
-                                <span className="rounded-full border border-hud-border-secondary bg-hud-bg-secondary/80 px-3 py-1.5 font-medium text-hud-text-primary">
-                                    매물 {totalContractCount}건
-                                </span>
-                            </div>
                         </div>
                     </div>
 
                     <div className="hidden xl:block overflow-x-auto">
-                        <table className="min-w-[1320px] w-full table-fixed divide-y divide-hud-border-secondary">
+                        <table className="min-w-[1440px] w-full table-fixed divide-y divide-hud-border-secondary">
                             <colgroup>
                                 <col className="w-[18%]" />
                                 <col className="w-[16%]" />
-                                <col className="w-[10%]" />
                                 <col className="w-[12%]" />
-                                <col className="w-[14%]" />
-                                <col className="w-[30%]" />
+                                <col className="w-[20%]" />
+                                <col className="w-[22%]" />
+                                <col className="w-[12%]" />
                             </colgroup>
                             <thead className="bg-hud-bg-secondary/85 backdrop-blur-sm">
                                 <tr>
-                                    <th className="px-4 py-3 text-left text-[11px] font-semibold tracking-[0.08em] text-hud-text-secondary">고객명</th>
+                                    <th className="px-4 py-3 text-left text-[11px] font-semibold tracking-[0.08em] text-hud-text-secondary">책임자</th>
                                     <th className="px-4 py-3 text-left text-[11px] font-semibold tracking-[0.08em] text-hud-text-secondary">연락처</th>
-                                    <th className="px-4 py-3 text-left text-[11px] font-semibold tracking-[0.08em] text-hud-text-secondary">등록건수</th>
-                                    <th className="px-4 py-3 text-left text-[11px] font-semibold tracking-[0.08em] text-hud-text-secondary">등록일</th>
                                     <th className="px-4 py-3 text-left text-[11px] font-semibold tracking-[0.08em] text-hud-text-secondary">수정일</th>
                                     <th className="px-4 py-3 text-left text-[11px] font-semibold tracking-[0.08em] text-hud-text-secondary">고객메모</th>
+                                    <th className="px-4 py-3 text-left text-[11px] font-semibold tracking-[0.08em] text-hud-text-secondary">고객상담</th>
+                                    <th className="px-4 py-3 text-right text-[11px] font-semibold tracking-[0.08em] text-hud-text-secondary">관리</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-hud-border-secondary">
                                 {paginatedCustomers.map((customer, index) => {
                                     const customerRowClass = index % 2 === 0 ? 'bg-hud-bg-primary/92' : 'bg-hud-bg-secondary/12'
                                     const detailRowClass = index % 2 === 0 ? 'bg-hud-bg-secondary/16' : 'bg-hud-bg-secondary/26'
-                                    const hasMemo = Boolean(customer.memo?.trim())
 
                                     return (
                                         <Fragment key={customer.id}>
-                                            <tr className={`${customerRowClass} transition-colors hover:bg-hud-bg-hover/25`}>
+                                            <tr className={`${customerRowClass} border-b border-hud-border-table transition-colors hover:bg-hud-bg-hover/25`}>
                                                 <td className="px-4 py-3 align-middle">
                                                     <div className="flex items-center gap-3">
                                                         <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-hud-accent-primary/20 bg-hud-accent-primary/10 text-sm font-semibold text-hud-accent-primary">
                                                             {customer.customerName.slice(0, 1)}
                                                         </div>
                                                         <div className="min-w-0">
-                                                            <p className="truncate font-semibold text-hud-text-primary">{customer.customerName}</p>
-                                                            <p className="mt-0.5 text-xs text-hud-text-secondary">
-                                                                {hasMemo ? '메모 연결됨' : '메모 없음'}
-                                                            </p>
+                                                            <div className="flex flex-wrap items-center gap-2">
+                                                                <p className="truncate font-semibold text-hud-text-primary">{customer.customerName}</p>
+                                                            </div>
                                                         </div>
                                                     </div>
                                                 </td>
@@ -686,29 +764,46 @@ export default function CustomerInfoManagement() {
                                                     </div>
                                                 </td>
                                                 <td className="px-4 py-3 align-middle text-sm text-hud-text-primary">
-                                                    <span className="inline-flex min-w-[60px] items-center justify-center rounded-full border border-hud-border-secondary bg-hud-bg-secondary/80 px-2.5 py-1 font-medium">
-                                                        {customer.contractCount}건
-                                                    </span>
+                                                    {formatDate(customer.updatedAt)}
                                                 </td>
                                                 <td className="px-4 py-3 align-middle text-sm text-hud-text-primary">
-                                                    {formatDate(customer.createdAt)}
+                                                    {renderInlineMemoField(customer)}
                                                 </td>
                                                 <td className="px-4 py-3 align-middle text-sm text-hud-text-primary">
-                                                    {formatDateTime(customer.updatedAt)}
+                                                    {renderConsultationPanel(customer, true)}
                                                 </td>
-                                                <td className="px-4 py-3 align-middle text-sm text-hud-text-primary">
-                                                    <p className="truncate text-hud-text-secondary" title={customer.memo || '메모 없음'}>
-                                                        {customer.memo || '메모 없음'}
-                                                    </p>
+                                                <td className="px-4 py-3 align-middle">
+                                                    <div className="flex justify-end gap-2">
+                                                        <Button
+                                                            type="button"
+                                                            variant="secondary"
+                                                            size="sm"
+                                                            onClick={() => goToCustomerConsultation(customer)}
+                                                        >
+                                                            <span className="inline-flex items-center gap-1.5">
+                                                                <MessageSquareText className="h-3.5 w-3.5" />
+                                                                상담기록
+                                                            </span>
+                                                        </Button>
+                                                        <Button
+                                                            type="button"
+                                                            variant="danger"
+                                                            size="sm"
+                                                            onClick={() => void handleDeleteCustomer(customer)}
+                                                            disabled={Boolean(deletingCustomerIds[customer.id])}
+                                                        >
+                                                            <span className="inline-flex items-center gap-1.5">
+                                                                <Trash2 className="h-3.5 w-3.5" />
+                                                                {deletingCustomerIds[customer.id] ? '삭제 중...' : '고객 삭제'}
+                                                            </span>
+                                                        </Button>
+                                                    </div>
                                                 </td>
                                             </tr>
                                             <tr className={detailRowClass}>
                                                 <td colSpan={6} className="p-0">
-                                                    <div className="border-t border-hud-border-secondary p-4">
-                                                        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(300px,360px)]">
-                                                            {renderDesktopContractsTable(customer)}
-                                                            {renderMemoEditor(customer)}
-                                                        </div>
+                                                    <div className="border-t border-hud-border-secondary px-4 pb-4 pt-2">
+                                                        {renderDesktopContractsTable(customer)}
                                                     </div>
                                                 </td>
                                             </tr>
@@ -720,54 +815,85 @@ export default function CustomerInfoManagement() {
                     </div>
 
                     <div className="space-y-4 p-4 xl:hidden">
-                        {paginatedCustomers.map((customer) => (
-                            <div
-                                key={customer.id}
-                                className="overflow-hidden rounded-[var(--hud-base-border-radius)] border border-hud-border-secondary bg-hud-bg-card shadow-hud"
-                                style={{
-                                    background: 'linear-gradient(135deg, rgba(var(--hud-accent-primary-rgb, 0, 255, 204), 0.12) 0%, rgba(var(--hud-accent-primary-rgb, 0, 255, 204), 0.03) 22%, var(--hud-bg-card) 56%)',
-                                }}
-                            >
-                                <div className="border-b border-hud-border-secondary px-4 py-4">
-                                    <div className="flex items-start gap-3">
-                                        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-hud-accent-primary/20 bg-hud-accent-primary/10 text-sm font-semibold text-hud-accent-primary">
-                                            {customer.customerName.slice(0, 1)}
+                        {paginatedCustomers.map((customer) => {
+                            return (
+                                <div
+                                    key={customer.id}
+                                    className="overflow-hidden rounded-[var(--hud-base-border-radius)] border border-hud-border-primary/30 bg-hud-bg-card shadow-hud"
+                                    style={{
+                                        background: 'linear-gradient(135deg, rgba(var(--hud-accent-primary-rgb, 0, 255, 204), 0.12) 0%, rgba(var(--hud-accent-primary-rgb, 0, 255, 204), 0.03) 22%, var(--hud-bg-card) 56%)',
+                                    }}
+                                >
+                                    <div className="border-b border-hud-border-secondary bg-hud-bg-secondary/20 px-4 py-3">
+                                        <div className="flex items-start gap-3">
+                                            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-hud-accent-primary/20 bg-hud-accent-primary/10 text-sm font-semibold text-hud-accent-primary">
+                                                {customer.customerName.slice(0, 1)}
+                                            </div>
+                                            <div className="min-w-0 flex-1">
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                    <h3 className="text-base font-semibold text-hud-text-primary">{customer.customerName}</h3>
+                                                </div>
+                                                <div className="mt-2 flex items-center gap-2 text-sm">
+                                                    <Phone className="h-4 w-4 text-hud-text-secondary" />
+                                                    <span className={!customer.customerPhone ? 'text-hud-accent-danger' : 'text-hud-text-primary'}>
+                                                        {formatPhone(customer.customerPhone)}
+                                                    </span>
+                                                </div>
+                                                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                                                    <div className="rounded-xl bg-hud-bg-secondary/75 px-3 py-2">
+                                                        <p className="text-[11px] font-semibold tracking-[0.08em] text-hud-text-secondary">등록일</p>
+                                                        <p className="mt-1 text-sm text-hud-text-primary">{formatDate(customer.createdAt)}</p>
+                                                    </div>
+                                                    <div className="rounded-xl bg-hud-bg-secondary/75 px-3 py-2">
+                                                        <p className="text-[11px] font-semibold tracking-[0.08em] text-hud-text-secondary">수정일</p>
+                                                        <p className="mt-1 text-sm text-hud-text-primary">{formatDate(customer.updatedAt)}</p>
+                                                    </div>
+                                                </div>
+                                                <div className="mt-3">
+                                                    {renderInlineMemoField(customer, true)}
+                                                </div>
+                                                <div className="mt-3">
+                                                    {renderConsultationPanel(customer, true)}
+                                                </div>
+                                            </div>
+                                            <Button
+                                                type="button"
+                                                variant="secondary"
+                                                size="sm"
+                                                onClick={() => goToCustomerConsultation(customer)}
+                                                className="shrink-0"
+                                            >
+                                                <span className="inline-flex items-center gap-1.5">
+                                                    <MessageSquareText className="h-3.5 w-3.5" />
+                                                    상담기록
+                                                </span>
+                                            </Button>
+                                            <Button
+                                                type="button"
+                                                variant="danger"
+                                                size="sm"
+                                                onClick={() => void handleDeleteCustomer(customer)}
+                                                disabled={Boolean(deletingCustomerIds[customer.id])}
+                                                className="shrink-0"
+                                            >
+                                                <span className="inline-flex items-center gap-1.5">
+                                                    <Trash2 className="h-3.5 w-3.5" />
+                                                    {deletingCustomerIds[customer.id] ? '삭제 중...' : '고객 삭제'}
+                                                </span>
+                                            </Button>
                                         </div>
-                                        <div className="min-w-0 flex-1">
-                                            <div className="flex flex-wrap items-center gap-2">
-                                                <h3 className="text-base font-semibold text-hud-text-primary">{customer.customerName}</h3>
-                                                <span className="rounded-full border border-hud-border-secondary bg-hud-bg-secondary/80 px-2.5 py-1 text-[11px] font-medium text-hud-text-primary">
-                                                    등록 {customer.contractCount}건
-                                                </span>
-                                            </div>
-                                            <div className="mt-2 flex items-center gap-2 text-sm">
-                                                <Phone className="h-4 w-4 text-hud-text-secondary" />
-                                                <span className={!customer.customerPhone ? 'text-hud-accent-danger' : 'text-hud-text-primary'}>
-                                                    {formatPhone(customer.customerPhone)}
-                                                </span>
-                                            </div>
-                                            <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                                                <div className="rounded-xl bg-hud-bg-secondary/75 px-3 py-2">
-                                                    <p className="text-[11px] font-semibold tracking-[0.08em] text-hud-text-secondary">등록일</p>
-                                                    <p className="mt-1 text-sm text-hud-text-primary">{formatDate(customer.createdAt)}</p>
-                                                </div>
-                                                <div className="rounded-xl bg-hud-bg-secondary/75 px-3 py-2">
-                                                    <p className="text-[11px] font-semibold tracking-[0.08em] text-hud-text-secondary">수정일</p>
-                                                    <p className="mt-1 text-sm text-hud-text-primary">{formatDateTime(customer.updatedAt)}</p>
-                                                </div>
-                                            </div>
+                                    </div>
+                                    <div className="space-y-3 divide-y divide-hud-border-secondary p-4">
+                                        <div className="pt-0">
+                                            {renderMobileContracts(customer)}
                                         </div>
                                     </div>
                                 </div>
-                                <div className="space-y-4 p-4">
-                                    {renderMemoEditor(customer, true)}
-                                    {renderMobileContracts(customer)}
-                                </div>
-                            </div>
-                        ))}
+                            )
+                        })}
                     </div>
 
-                    <div className="flex flex-col gap-3 border-t border-hud-border-secondary px-4 py-4 text-sm sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex flex-col gap-3 border-t border-hud-border-secondary bg-hud-bg-secondary/25 px-4 py-4 text-sm sm:flex-row sm:items-center sm:justify-between">
                         <span className="text-hud-text-secondary">
                             {filteredCustomers.length === 0
                                 ? '0건'
@@ -787,11 +913,10 @@ export default function CustomerInfoManagement() {
                                     key={pageNumber}
                                     type="button"
                                     onClick={() => setCurrentPage(pageNumber)}
-                                    className={`min-w-[36px] rounded-md border px-3 py-1.5 ${
-                                        pageNumber === currentPage
-                                            ? 'border-hud-accent-primary/40 bg-hud-accent-primary/10 text-hud-accent-primary'
-                                            : 'border-hud-border-secondary text-hud-text-primary'
-                                    }`}
+                                    className={`min-w-[36px] rounded-md border px-3 py-1.5 ${pageNumber === currentPage
+                                        ? 'border-hud-accent-primary/40 bg-hud-accent-primary/10 text-hud-accent-primary'
+                                        : 'border-hud-border-secondary text-hud-text-primary'
+                                        }`}
                                     aria-current={pageNumber === currentPage ? 'page' : undefined}
                                 >
                                     {pageNumber}

@@ -71,6 +71,7 @@ import ManagedPropertyList from './pages/real-estate/ManagedPropertyList'
 import AddressMarketStats from './pages/real-estate/AddressMarketStats'
 import RebMarketStats from './pages/real-estate/RebMarketStats'
 import CustomerInfoManagement from './pages/customers/CustomerInfoManagement'
+import CustomerConsultationManagement from './pages/customers/CustomerConsultationManagement'
 
 // Misc Pages
 import Error404 from './pages/Error404'
@@ -159,9 +160,13 @@ function App() {
                     <Route path="real-estate/register" element={<PropertyRegister />} />
                     <Route path="real-estate/favorites" element={<FavoritePropertyList />} />
                     <Route path="real-estate/managed" element={<ManagedPropertyList />} />
+                    <Route path="real-estate/managed/sale" element={<ManagedPropertyList contractTypeFilter="매매" pageTitle="관리매물 · 매매" />} />
+                    <Route path="real-estate/managed/jeonse" element={<ManagedPropertyList contractTypeFilter="전세" pageTitle="관리매물 · 전세" />} />
+                    <Route path="real-estate/managed/monthly" element={<ManagedPropertyList contractTypeFilter="월세" pageTitle="관리매물 · 월세" />} />
                     <Route path="real-estate/address-market-stats" element={<AddressMarketStats />} />
                     <Route path="real-estate/reb-market-stats" element={<RebMarketStats />} />
                     <Route path="customers/management" element={<CustomerInfoManagement />} />
+                    <Route path="customers/consultations" element={<CustomerConsultationManagement />} />
                 </Route>
 
                 {/* 404 Fallback */}
